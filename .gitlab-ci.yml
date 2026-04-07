@@ -17,13 +17,24 @@ cache:
 test:
   stage: test
   image: rust:latest
+  before_script:
+    - cargo install cargo-nextest --locked
   script:
-    - cargo test --verbose
+    - cargo nextest run --profile ci
+  artifacts:
+    when: always
+    reports:
+      junit: target/nextest/ci/junit.xml
 
 build:
   stage: build
   image: rust:latest
   script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION="${CI_COMMIT_TAG#v}"
+        sed -i "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
+      fi
     - cargo build --release --target ${TARGET}
     - strip target/${TARGET}/release/ztop
     - cp target/${TARGET}/release/ztop ztop-linux-amd64

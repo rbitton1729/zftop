@@ -63,6 +63,27 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App, int
     }
 }
 
+fn print_help() {
+    let version = env!("CARGO_PKG_VERSION");
+    println!("ztop {version} — a terminal dashboard for ZFS");
+    println!();
+    println!("USAGE:");
+    println!("    ztop [OPTIONS]");
+    println!();
+    println!("OPTIONS:");
+    println!("    -n, --interval <ms>     Polling interval in milliseconds [default: 1000]");
+    println!("        --source <path>     Path to arcstats file [default: /proc/spl/kstat/zfs/arcstats]");
+    println!("        --meminfo <path>    Path to meminfo file [default: /proc/meminfo]");
+    println!("    -h, --help              Print this help message");
+    println!("    -V, --version           Print version");
+    println!();
+    println!("CONTROLS:");
+    println!("    q, Ctrl+C               Quit");
+    println!("    r                        Force refresh");
+    println!();
+    println!("Copyright (c) 2026 Raphael Bitton. Licensed under MIT.");
+}
+
 fn parse_args() -> (PathBuf, Option<PathBuf>, Duration) {
     let args: Vec<String> = std::env::args().collect();
     let mut source = PathBuf::from(DEFAULT_SOURCE);
@@ -71,6 +92,14 @@ fn parse_args() -> (PathBuf, Option<PathBuf>, Duration) {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            "-V" | "--version" => {
+                println!("ztop {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
             "--source" => {
                 if let Some(path) = args.get(i + 1) {
                     source = PathBuf::from(path);
