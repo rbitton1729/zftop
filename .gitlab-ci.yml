@@ -7,11 +7,10 @@ stages:
 
 variables:
   CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
-  TARGET: x86_64-unknown-linux-gnu
   PACKAGE_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/ztop"
 
 cache:
-  key: ${CI_COMMIT_REF_SLUG}
+  key: ${CI_COMMIT_REF_SLUG}-${CI_JOB_NAME}
   paths:
     - .cargo/registry
     - .cargo/git
@@ -29,9 +28,11 @@ test:
     reports:
       junit: target/nextest/ci/junit.xml
 
-build:
+build:x86_64:
   stage: build
-  image: rust:latest
+  image: messense/rust-musl-cross:x86_64-musl
+  variables:
+    TARGET: x86_64-unknown-linux-musl
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ]; then
@@ -39,7 +40,7 @@ build:
         sed -i "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
       fi
     - cargo build --release --target ${TARGET}
-    - strip target/${TARGET}/release/ztop
+    - x86_64-linux-musl-strip target/${TARGET}/release/ztop
     - cp target/${TARGET}/release/ztop ztop-linux-amd64
     - sha256sum ztop-linux-amd64 | cut -d' ' -f1 > ztop-linux-amd64.sha256
   artifacts:
@@ -47,11 +48,33 @@ build:
       - ztop-linux-amd64
       - ztop-linux-amd64.sha256
 
+build:aarch64:
+  stage: build
+  image: messense/rust-musl-cross:aarch64-musl
+  variables:
+    TARGET: aarch64-unknown-linux-musl
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        VERSION="${CI_COMMIT_TAG#v}"
+        sed -i "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
+      fi
+    - cargo build --release --target ${TARGET}
+    - aarch64-linux-musl-strip target/${TARGET}/release/ztop
+    - cp target/${TARGET}/release/ztop ztop-linux-arm64
+    - sha256sum ztop-linux-arm64 | cut -d' ' -f1 > ztop-linux-arm64.sha256
+  artifacts:
+    paths:
+      - ztop-linux-arm64
+      - ztop-linux-arm64.sha256
+
 upload:
   stage: upload
   image: curlimages/curl:latest
   needs:
-    - job: build
+    - job: build:x86_64
+      artifacts: true
+    - job: build:aarch64
       artifacts: true
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
@@ -65,24 +88,36 @@ upload:
       curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
            --upload-file ztop-linux-amd64.sha256 \
            "${PACKAGE_URL}/${VERSION}/ztop-linux-amd64.sha256"
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+           --upload-file ztop-linux-arm64 \
+           "${PACKAGE_URL}/${VERSION}/ztop-linux-arm64"
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+           --upload-file ztop-linux-arm64.sha256 \
+           "${PACKAGE_URL}/${VERSION}/ztop-linux-arm64.sha256"
 
 release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   needs:
-    - job: build
+    - job: build:x86_64
+      artifacts: true
+    - job: build:aarch64
       artifacts: true
     - job: upload
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
   script:
-    - BINARY_SHA256=$(cat ztop-linux-amd64.sha256)
+    - AMD64_SHA256=$(cat ztop-linux-amd64.sha256)
+    - ARM64_SHA256=$(cat ztop-linux-arm64.sha256)
     - VERSION="${CI_COMMIT_TAG#v}"
     - echo "## Checksums" > description.md
     - echo "" >> description.md
     - echo "| File | SHA256 |" >> description.md
     - echo "|------|--------|" >> description.md
-    - echo "| ztop-linux-amd64 | \`${BINARY_SHA256}\` |" >> description.md
+    - echo "| ztop-linux-amd64 | \`${AMD64_SHA256}\` |" >> description.md
+    - echo "| ztop-linux-arm64 | \`${ARM64_SHA256}\` |" >> description.md
   release:
     tag_name: ${CI_COMMIT_TAG}
     name: "ztop ${CI_COMMIT_TAG}"
@@ -92,12 +127,15 @@ release:
         - name: ztop-linux-amd64
           url: "${PACKAGE_URL}/${CI_COMMIT_TAG#v}/ztop-linux-amd64"
           filepath: /ztop-linux-amd64
+        - name: ztop-linux-arm64
+          url: "${PACKAGE_URL}/${CI_COMMIT_TAG#v}/ztop-linux-arm64"
+          filepath: /ztop-linux-arm64
 
 aur:
   stage: publish
   image: archlinux:latest
   needs:
-    - job: build
+    - job: build:x86_64
       artifacts: true
     - job: upload
   rules:

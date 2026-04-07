@@ -14,7 +14,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Top section: title + bars (full width)
     // Middle section: panels side by side
     // Bottom: footer
-    let top_height = if has_meminfo { 8 } else { 4 }; // title + ram + gauge vs title + gauge
+    let top_height = if has_meminfo { 7 } else { 4 }; // title + ram + gauge vs title + gauge
 
     let [top_area, middle_area, footer_area] = Layout::vertical([
         Constraint::Length(top_height),
@@ -27,7 +27,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if has_meminfo {
         let [title_area, ram_area, gauge_area] = Layout::vertical([
             Constraint::Length(1),
-            Constraint::Length(4),
+            Constraint::Length(3),
             Constraint::Length(3),
         ])
         .areas(top_area);
@@ -103,7 +103,29 @@ fn draw_ram_bar(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let block = Block::default().borders(Borders::ALL).title("System RAM");
+    let used_total = total.saturating_sub(free);
+    let used_pct = used_total as f64 / total as f64 * 100.0;
+
+    let bottom_title = Line::from(vec![
+        Span::raw(format!(" {}/{} ({:.1}%) ", format_bytes(used_total * 1024), format_bytes(total * 1024), used_pct)),
+        Span::styled(
+            format!("App {} ({:.1}%) ", format_bytes(app_used * 1024), app_used as f64 / total as f64 * 100.0),
+            Style::default().fg(Color::Green),
+        ),
+        Span::styled(
+            format!("ARC {} ({:.1}%) ", format_bytes(arc_kb * 1024), arc_kb as f64 / total as f64 * 100.0),
+            Style::default().fg(Color::Magenta),
+        ),
+        Span::styled(
+            format!("Buf/Cache {} ({:.1}%) ", format_bytes(buf_cache * 1024), buf_cache as f64 / total as f64 * 100.0),
+            Style::default().fg(Color::Yellow),
+        ),
+    ]);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("System RAM")
+        .title_bottom(bottom_title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -144,32 +166,6 @@ fn draw_ram_bar(frame: &mut Frame, area: Rect, app: &App) {
     let bar_line = Line::from(bar_spans);
     frame.render_widget(Paragraph::new(bar_line), inner);
 
-    // Legend on the second line if there's room
-    if inner.height >= 2 {
-        let used_total = total.saturating_sub(free);
-        let legend_area = Rect {
-            x: inner.x,
-            y: inner.y + 1,
-            width: inner.width,
-            height: 1,
-        };
-        let legend = Line::from(vec![
-            Span::raw(format!("{}/{} ", format_bytes(used_total * 1024), format_bytes(total * 1024))),
-            Span::styled(
-                format!("App {} ({:.1}%) ", format_bytes(app_used * 1024), app_used as f64 / total as f64 * 100.0),
-                Style::default().fg(Color::Green),
-            ),
-            Span::styled(
-                format!("ARC {} ({:.1}%) ", format_bytes(arc_kb * 1024), arc_kb as f64 / total as f64 * 100.0),
-                Style::default().fg(Color::Magenta),
-            ),
-            Span::styled(
-                format!("Buf/Cache {} ({:.1}%)", format_bytes(buf_cache * 1024), buf_cache as f64 / total as f64 * 100.0),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]);
-        frame.render_widget(Paragraph::new(legend), legend_area);
-    }
 }
 
 fn draw_gauge(frame: &mut Frame, area: Rect, app: &App) {

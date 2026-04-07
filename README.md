@@ -40,7 +40,12 @@ sudo install -Dm755 target/release/ztop /usr/bin/ztop
 
 ### Prebuilt binary
 
-Download the latest `ztop-linux-amd64` from the [releases page](https://git.skylantix.com/rbitton/ztop/-/releases), then:
+Static musl binaries are attached to every [release](https://git.skylantix.com/rbitton/ztop/-/releases):
+
+- `ztop-linux-amd64` — x86_64
+- `ztop-linux-arm64` — aarch64 (Graviton, Ampere Altra, Pi 4/5)
+
+Download the one for your arch, then:
 
 ```
 chmod +x ztop-linux-amd64
