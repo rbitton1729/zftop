@@ -1,6 +1,6 @@
 # ztop
 
-A terminal dashboard for ZFS, in the spirit of `htop`.
+A terminal-based dashboard for the Zettabyte File System, in the spirit of `htop`.
 
 ## Status
 
@@ -44,8 +44,7 @@ ztop is a *finishable* project. ZFS is stable, the surface area we care about is
 - **v0.3** — datasets view: usage, compression ratios, sortable and filterable
 - **v0.4** — snapshots view, with awareness of Sanoid retention classes
 - **v0.5** — SMART health joined to vdev members on the pools view
-
-Anything not on this list is explicitly out of scope for v1.0: no remote/fleet mode, no themes, no config files, no JSON export, no alerting. ztop is a local single-host TUI. If you want a fleet view, build it on top — there are better tools for that job and rebuilding Ansible isn't the goal here.
+- **v1.0** — Remote/Fleet mode — use ssh either independently or with Ansible to monitor many machines at once.
 
 ## Why Rust
 
@@ -54,4 +53,3 @@ Because I wanted to see Rust in action on a project I deeply understand. Practic
 ## License
 
 MIT. See `LICENSE`.
-
