@@ -7,7 +7,7 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crossterm::event::{self, Event};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
@@ -19,9 +19,15 @@ use app::App;
 const DEFAULT_SOURCE: &str = "/proc/spl/kstat/zfs/arcstats";
 
 fn main() -> Result<()> {
-    let (source, meminfo_source) = parse_args();
-    let mut app = App::new(source.clone(), meminfo_source)
-        .with_context(|| format!("failed to read {}", source.display()))?;
+    let (source, meminfo_source, interval) = parse_args();
+    let mut app = match App::new(source.clone(), meminfo_source) {
+        Ok(app) => app,
+        Err(_) if source == PathBuf::from(DEFAULT_SOURCE) => {
+            eprintln!("ztop: ZFS is not found on this system ({DEFAULT_SOURCE} does not exist)");
+            std::process::exit(1);
+        }
+        Err(e) => return Err(e.context(format!("failed to read {}", source.display()))),
+    };
 
     // Set up terminal
     terminal::enable_raw_mode()?;
@@ -29,7 +35,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run(&mut terminal, &mut app);
+    let result = run(&mut terminal, &mut app, interval);
 
     // Restore terminal no matter what
     terminal::disable_raw_mode()?;
@@ -38,11 +44,11 @@ fn main() -> Result<()> {
     result
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
+fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App, interval: Duration) -> Result<()> {
     loop {
         terminal.draw(|frame| ui::draw(frame, app))?;
 
-        if event::poll(Duration::from_secs(1))? {
+        if event::poll(interval)? {
             if let Event::Key(key) = event::read()? {
                 app.on_key(key);
             }
@@ -57,10 +63,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
     }
 }
 
-fn parse_args() -> (PathBuf, Option<PathBuf>) {
+fn parse_args() -> (PathBuf, Option<PathBuf>, Duration) {
     let args: Vec<String> = std::env::args().collect();
     let mut source = PathBuf::from(DEFAULT_SOURCE);
     let mut meminfo_source = None;
+    let mut interval = Duration::from_secs(1);
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -76,9 +83,17 @@ fn parse_args() -> (PathBuf, Option<PathBuf>) {
                     i += 1;
                 }
             }
+            "--interval" | "-n" => {
+                if let Some(val) = args.get(i + 1) {
+                    if let Ok(ms) = val.parse::<u64>() {
+                        interval = Duration::from_millis(ms);
+                    }
+                    i += 1;
+                }
+            }
             _ => {}
         }
         i += 1;
     }
-    (source, meminfo_source)
+    (source, meminfo_source, interval)
 }

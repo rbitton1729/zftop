@@ -1,7 +1,7 @@
 // App state and update logic.
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 
 use crate::arcstats::ArcStats;
@@ -49,6 +49,9 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.should_quit = true;
+            }
             KeyCode::Char('r') => {
                 let _ = self.refresh();
             }
