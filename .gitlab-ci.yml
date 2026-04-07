@@ -2,6 +2,7 @@ stages:
   - test
   - build
   - release
+  - publish
 
 variables:
   CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
@@ -18,7 +19,7 @@ test:
   stage: test
   image: rust:latest
   before_script:
-    - cargo install cargo-nextest --locked
+    - curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/bin
   script:
     - cargo nextest run --profile ci
   artifacts:
@@ -41,7 +42,6 @@ build:
   artifacts:
     paths:
       - ztop-linux-amd64
-    expire_in: 1 week
 
 release:
   stage: release
@@ -52,13 +52,53 @@ release:
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
   script:
-    - echo "Creating release for ${CI_COMMIT_TAG}"
+    - BINARY_SHA256=$(sha256sum ztop-linux-amd64 | cut -d' ' -f1)
+    - echo "## Checksums" > description.md
+    - echo "" >> description.md
+    - echo "| File | SHA256 |" >> description.md
+    - echo "|------|--------|" >> description.md
+    - echo "| ztop-linux-amd64 | \`${BINARY_SHA256}\` |" >> description.md
   release:
     tag_name: ${CI_COMMIT_TAG}
     name: "ztop ${CI_COMMIT_TAG}"
-    description: "Release ${CI_COMMIT_TAG}"
+    description: ./description.md
     assets:
       links:
         - name: ztop-linux-amd64
           url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/ztop-linux-amd64?job=build"
           filepath: /ztop-linux-amd64
+
+aur:
+  stage: publish
+  image: archlinux:latest
+  needs:
+    - job: build
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  script:
+    - pacman -Sy --noconfirm openssh git curl
+    - mkdir -p ~/.ssh
+    - cp "$AUR_SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    - echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" >> ~/.ssh/known_hosts
+    - git config --global user.name "Raphael Bitton"
+    - git config --global user.email "$AUR_EMAIL"
+    - VERSION="${CI_COMMIT_TAG#v}"
+    # Compute checksums
+    - BINARY_SHA256=$(sha256sum "${CI_PROJECT_DIR}/ztop-linux-amd64" | cut -d' ' -f1)
+    - LICENCE_SHA256=$(curl -sL "https://git.skylantix.com/rbitton/ztop/-/raw/v${VERSION}/LICENCE" | sha256sum | cut -d' ' -f1)
+    # Clone AUR and update PKGBUILD
+    - git clone ssh://aur@aur.archlinux.org/zfstop.git aur-repo
+    - cd aur-repo
+    - cp "${CI_PROJECT_DIR}/aur/PKGBUILD" .
+    - sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
+    - sed -i "s/^sha256sums=.*/sha256sums=('${BINARY_SHA256}' '${LICENCE_SHA256}')/" PKGBUILD
+    # Generate .SRCINFO (makepkg needs non-root)
+    - useradd -m builder
+    - chown -R builder:builder .
+    - su builder -c "makepkg --printsrcinfo > .SRCINFO"
+    - chown -R root:root .
+    - git add PKGBUILD .SRCINFO
+    - git commit -m "Update to ${VERSION}"
+    - git push

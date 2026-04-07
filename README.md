@@ -19,11 +19,48 @@ A single screen that refreshes once a second:
 
 All of it comes from `/proc/spl/kstat/zfs/arcstats`. No subprocesses, no parsing of human-formatted output, no surprises.
 
+## Install
+
+### Arch Linux (AUR)
+
+```
+yay -S zfstop
+```
+
+Or with any AUR helper. The package installs the binary as `ztop` with a `zfstop` symlink.
+
+### From source
+
+```
+git clone https://git.skylantix.com/rbitton/ztop.git
+cd ztop
+cargo build --release
+sudo install -Dm755 target/release/ztop /usr/bin/ztop
+```
+
+### Prebuilt binary
+
+Download the latest `ztop-linux-amd64` from the [releases page](https://git.skylantix.com/rbitton/ztop/-/releases), then:
+
+```
+chmod +x ztop-linux-amd64
+sudo mv ztop-linux-amd64 /usr/bin/ztop
+```
+
+## Usage
+
+```
+ztop                    # default: poll every 1s
+ztop -n 500             # poll every 500ms
+ztop --interval 2000    # poll every 2 seconds
+ztop --help             # show all options
+```
+
 ## Controls
 
 | Key | Action |
 |-----|--------|
-| `q` | quit |
+| `q` / `Ctrl+C` | quit |
 | `r` | force refresh |
 
 That's the whole interface in v0.1.
