@@ -4,7 +4,7 @@ mod meminfo;
 mod ui;
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -15,15 +15,24 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use app::App;
+use arcstats::ArcStats;
+use meminfo::MemSource;
 
 const DEFAULT_SOURCE: &str = "/proc/spl/kstat/zfs/arcstats";
 
 fn main() -> Result<()> {
     let (source, meminfo_source, interval) = parse_args();
-    let mut app = match App::new(source.clone(), meminfo_source) {
+    let (arc_reader, mem_source) = build_sources(source.clone(), meminfo_source);
+
+    let mut app = match App::new(arc_reader, mem_source) {
         Ok(app) => app,
-        Err(_) if source == PathBuf::from(DEFAULT_SOURCE) => {
-            eprintln!("zfstop: ZFS is not found on this system ({DEFAULT_SOURCE} does not exist)");
+        Err(e) if is_default_source(&source) => {
+            eprintln!("zfstop: ZFS is not found on this system");
+            #[cfg(target_os = "linux")]
+            eprintln!("  ({DEFAULT_SOURCE} does not exist)");
+            #[cfg(target_os = "freebsd")]
+            eprintln!("  (kstat.zfs.misc.arcstats sysctls are unavailable)");
+            let _ = e;
             std::process::exit(1);
         }
         Err(e) => return Err(e.context(format!("failed to read {}", source.display()))),
@@ -42,6 +51,66 @@ fn main() -> Result<()> {
     io::stdout().execute(LeaveAlternateScreen)?;
 
     result
+}
+
+#[cfg(target_os = "linux")]
+fn build_sources(
+    source: PathBuf,
+    meminfo_source: Option<PathBuf>,
+) -> (
+    Box<dyn FnMut() -> Result<ArcStats>>,
+    Option<Box<dyn MemSource>>,
+) {
+    let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
+        Box::new(move || arcstats::linux::from_procfs_path(&source));
+    let meminfo_path = meminfo_source.unwrap_or_else(|| PathBuf::from("/proc/meminfo"));
+    let mem: Option<Box<dyn MemSource>> =
+        Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
+    (arc_reader, mem)
+}
+
+#[cfg(target_os = "freebsd")]
+fn build_sources(
+    source: PathBuf,
+    meminfo_source: Option<PathBuf>,
+) -> (
+    Box<dyn FnMut() -> Result<ArcStats>>,
+    Option<Box<dyn MemSource>>,
+) {
+    if source != PathBuf::from(DEFAULT_SOURCE) || meminfo_source.is_some() {
+        eprintln!("zfstop: --source/--meminfo are Linux-only and ignored on FreeBSD");
+    }
+    let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
+        Box::new(|| arcstats::freebsd::from_sysctl());
+    let mem: Option<Box<dyn MemSource>> = meminfo::freebsd::FreeBsdMemSource::new()
+        .ok()
+        .map(|s| Box::new(s) as Box<dyn MemSource>);
+    (arc_reader, mem)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn build_sources(
+    _source: PathBuf,
+    _meminfo_source: Option<PathBuf>,
+) -> (
+    Box<dyn FnMut() -> Result<ArcStats>>,
+    Option<Box<dyn MemSource>>,
+) {
+    let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
+        Box::new(|| Err(anyhow::anyhow!("zfstop only supports Linux and FreeBSD")));
+    (arc_reader, None)
+}
+
+fn is_default_source(source: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        source == Path::new(DEFAULT_SOURCE)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = source;
+        true
+    }
 }
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App, interval: Duration) -> Result<()> {
@@ -72,14 +141,16 @@ fn print_help() {
     println!();
     println!("OPTIONS:");
     println!("    -n, --interval <ms>     Polling interval in milliseconds [default: 1000]");
-    println!("        --source <path>     Path to arcstats file [default: /proc/spl/kstat/zfs/arcstats]");
-    println!("        --meminfo <path>    Path to meminfo file [default: /proc/meminfo]");
+    println!("        --source <path>     Path to arcstats file [Linux only; default: /proc/spl/kstat/zfs/arcstats]");
+    println!("        --meminfo <path>    Path to meminfo file [Linux only; default: /proc/meminfo]");
     println!("    -h, --help              Print this help message");
     println!("    -V, --version           Print version");
     println!();
     println!("CONTROLS:");
     println!("    q, Ctrl+C               Quit");
     println!("    r                        Force refresh");
+    println!();
+    println!("On FreeBSD, --source and --meminfo are ignored; data is read via sysctl.");
     println!();
     println!("Copyright (c) 2026 Raphael Bitton. Licensed under MIT.");
 }

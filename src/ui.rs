@@ -9,7 +9,7 @@ use ratatui::Frame;
 use crate::app::{format_bytes, App};
 
 pub fn draw(frame: &mut Frame, app: &App) {
-    let has_meminfo = app.meminfo.is_some();
+    let has_meminfo = app.mem_snapshot.is_some();
 
     // Top section: title + bars (full width)
     // Middle section: panels side by side
@@ -94,33 +94,36 @@ fn draw_title(frame: &mut Frame, area: Rect) {
 }
 
 fn draw_ram_bar(frame: &mut Frame, area: Rect, app: &App) {
-    let Some((app_used, buf_cache, arc_kb, free)) = app.ram_segments() else {
+    let Some((total_bytes, segments)) = app.ram_segments() else {
         return;
     };
-    let m = app.meminfo.as_ref().unwrap();
-    let total = m.total;
-    if total == 0 {
+    if total_bytes == 0 {
         return;
     }
 
-    let used_total = total.saturating_sub(free);
-    let used_pct = used_total as f64 / total as f64 * 100.0;
+    // Bottom title: total used + each segment with its label and percentage.
+    let used_total: u64 = segments.iter().map(|s| s.bytes).sum();
+    let used_pct = used_total as f64 / total_bytes as f64 * 100.0;
 
-    let bottom_title = Line::from(vec![
-        Span::raw(format!(" {}/{} ({:.1}%) ", format_bytes(used_total * 1024), format_bytes(total * 1024), used_pct)),
-        Span::styled(
-            format!("App {} ({:.1}%) ", format_bytes(app_used * 1024), app_used as f64 / total as f64 * 100.0),
-            Style::default().fg(Color::Green),
-        ),
-        Span::styled(
-            format!("ARC {} ({:.1}%) ", format_bytes(arc_kb * 1024), arc_kb as f64 / total as f64 * 100.0),
-            Style::default().fg(Color::Magenta),
-        ),
-        Span::styled(
-            format!("Buf/Cache {} ({:.1}%) ", format_bytes(buf_cache * 1024), buf_cache as f64 / total as f64 * 100.0),
-            Style::default().fg(Color::Yellow),
-        ),
-    ]);
+    let mut title_spans: Vec<Span> = Vec::with_capacity(1 + segments.len());
+    title_spans.push(Span::raw(format!(
+        " {}/{} ({:.1}%) ",
+        format_bytes(used_total),
+        format_bytes(total_bytes),
+        used_pct,
+    )));
+    for seg in segments {
+        title_spans.push(Span::styled(
+            format!(
+                "{} {} ({:.1}%) ",
+                seg.label,
+                format_bytes(seg.bytes),
+                seg.bytes as f64 / total_bytes as f64 * 100.0,
+            ),
+            Style::default().fg(seg.color),
+        ));
+    }
+    let bottom_title = Line::from(title_spans);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -133,39 +136,30 @@ fn draw_ram_bar(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Segment colors — htop style
-    let segments: &[(&str, u64, Color)] = &[
-        ("App", app_used, Color::Green),
-        ("ARC", arc_kb, Color::Magenta),
-        ("Buf/Cache", buf_cache, Color::Yellow),
-    ];
-
     let bar_width = inner.width as usize;
     let mut bar_spans: Vec<Span> = Vec::new();
     let mut cols_used = 0;
 
-    for &(_, amount, color) in segments {
-        let frac = amount as f64 / total as f64;
+    for seg in segments {
+        let frac = seg.bytes as f64 / total_bytes as f64;
         let cols = (frac * bar_width as f64).round() as usize;
-        let cols = cols.min(bar_width - cols_used);
+        let cols = cols.min(bar_width.saturating_sub(cols_used));
         if cols > 0 {
             bar_spans.push(Span::styled(
                 "|".repeat(cols),
-                Style::default().fg(color),
+                Style::default().fg(seg.color),
             ));
             cols_used += cols;
         }
     }
 
-    // Fill remaining with empty space (free)
+    // Fill remaining with empty space (free).
     if cols_used < bar_width {
         bar_spans.push(Span::raw(" ".repeat(bar_width - cols_used)));
     }
 
-    // Render the bar on the first line
     let bar_line = Line::from(bar_spans);
     frame.render_widget(Paragraph::new(bar_line), inner);
-
 }
 
 fn draw_gauge(frame: &mut Frame, area: Rect, app: &App) {

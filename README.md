@@ -38,6 +38,10 @@ cargo build --release
 sudo install -Dm755 target/release/zfstop /usr/bin/zfstop
 ```
 
+### FreeBSD
+
+Same recipe — `pkg install rust && cargo build --release && install -m 755 target/release/zfstop /usr/local/bin/zfstop`. zfstop reads ZFS state via `sysctl kstat.zfs.misc.arcstats.*` and memory via `sysctl vm.stats.vm.* hw.physmem hw.pagesize`, so it works out of the box on any FreeBSD with OpenZFS — vanilla FreeBSD, TrueNAS, pfSense, anything. The `--source` and `--meminfo` flags are Linux-only and ignored on FreeBSD.
+
 ### Prebuilt binary
 
 Static musl binaries are attached to every [release](https://git.skylantix.com/rbitton/zfstop/-/releases):
