@@ -21,22 +21,24 @@ API_BASE="https://${REPO_HOST}/api/v4/projects/${REPO_PROJECT}"
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 VERSION="${VERSION:-}"
+FORCE="${FORCE:-}"
 
 # --- Arg parsing ---------------------------------------------------------
 
 usage() {
     cat <<EOF
-Usage: install.sh [--version X.Y.Z] [--dir DIR]
+Usage: install.sh [--version X.Y.Z] [--dir DIR] [--force]
 
 Installs zftop for the detected OS/arch from ${REPO_HOST}/rbitton/zftop.
 
 Options:
   --version X.Y.Z   Install a specific version (default: latest release)
   --dir DIR         Install directory (default: /usr/local/bin)
+  --force, -y       Skip the "ZFS not detected" confirmation prompt
   -h, --help        Show this help
 
 Environment variables (override defaults):
-  VERSION, INSTALL_DIR
+  VERSION, INSTALL_DIR, FORCE (any non-empty value = --force)
 EOF
 }
 
@@ -46,6 +48,7 @@ while [ $# -gt 0 ]; do
         --version=*)     VERSION="${1#--version=}"; shift ;;
         --dir)           INSTALL_DIR="$2"; shift 2 ;;
         --dir=*)         INSTALL_DIR="${1#--dir=}"; shift ;;
+        --force|-y|--yes) FORCE=1; shift ;;
         -h|--help)       usage; exit 0 ;;
         *)               echo "install.sh: unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -88,6 +91,72 @@ esac
 
 ASSET="zftop-${OS}-${ARCH}"
 echo "install.sh: detected ${OS}/${ARCH}, asset = ${ASSET}"
+
+# --- Check that ZFS is actually present ---------------------------------
+
+# A warning, not a hard failure. Someone might be pre-staging zftop on a host
+# that isn't yet mounted with ZFS, or installing into a chroot/container
+# that'll be flipped into a ZFS box later. We just want them to know.
+zfs_present() {
+    case "$OS" in
+        linux)
+            [ -r /proc/spl/kstat/zfs/arcstats ]
+            ;;
+        freebsd)
+            # Any kstat.zfs.misc.arcstats.* sysctl exists exactly when the
+            # ZFS module is loaded and reporting. `size` is the canonical one.
+            sysctl -n kstat.zfs.misc.arcstats.size >/dev/null 2>&1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+if ! zfs_present; then
+    case "$OS" in
+        linux)
+            zfs_reason="/proc/spl/kstat/zfs/arcstats is missing — the OpenZFS kernel module doesn't look loaded"
+            ;;
+        freebsd)
+            zfs_reason="kstat.zfs.misc.arcstats sysctls are unavailable — OpenZFS doesn't look loaded"
+            ;;
+    esac
+    echo ""
+    echo "install.sh: WARNING — ZFS is not detected on this host."
+    echo "  ${zfs_reason}."
+    echo "  zftop will still install, but it'll exit with an error on launch"
+    echo "  until ZFS is available."
+    echo ""
+
+    if [ -n "$FORCE" ]; then
+        echo "install.sh: --force set, continuing anyway."
+    else
+        # Find a readable tty to prompt on. When the script is run as
+        # `curl | sh`, stdin is the HTTP body, so we reopen /dev/tty to
+        # talk to the user directly. If neither is available (e.g. inside
+        # a non-interactive CI job), fall back to proceeding with a notice,
+        # since the user explicitly invoked the installer.
+        if [ -t 0 ]; then
+            printf "Install anyway? [y/N] "
+            read -r zfs_answer
+        elif [ -r /dev/tty ]; then
+            printf "Install anyway? [y/N] " > /dev/tty
+            read -r zfs_answer < /dev/tty
+        else
+            echo "install.sh: no tty available for confirmation — proceeding."
+            zfs_answer=y
+        fi
+        case "$zfs_answer" in
+            y|Y|yes|YES|Yes) ;;
+            *)
+                echo "install.sh: aborted (no install performed)."
+                exit 0
+                ;;
+        esac
+    fi
+    echo ""
+fi
 
 # --- Pick a downloader ---------------------------------------------------
 
