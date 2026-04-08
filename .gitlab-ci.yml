@@ -77,12 +77,12 @@ build:aarch64:
 # same internal vlan as the GitLab runner. The runner SSHes in as the
 # gitlab-ci user, pipes scripts/bsd-build.sh to the remote shell, and SCPs
 # the resulting binary back. The VM is set up by scripts/setup-bsd-ci.sh
-# (run once, by hand). Tag-only since the FreeBSD VM is single-tenant.
+# (run once, by hand). Runs on every push like the Linux build jobs — the
+# downstream upload/release/aur jobs are still tag-gated, so non-tag builds
+# just produce a CI artifact and don't publish anywhere.
 build:freebsd:
   stage: build
   image: alpine:latest
-  rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
   cache: []
   before_script:
     - apk add --no-cache openssh-client
@@ -94,8 +94,12 @@ build:freebsd:
     # via `ssh-keyscan -t ed25519 10.10.10.109`.
     - echo "10.10.10.109 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICrhVIFj+H8gZT/VfhTB6OFKN4gflNiH05OpfWH/+8AQ" >> ~/.ssh/known_hosts
   script:
+    # REF is the commit SHA the CI is building (always set).
+    # VERSION is the tag without the v prefix (empty string on non-tag builds,
+    # in which case bsd-build.sh skips the Cargo.toml version stamp).
+    - REF="${CI_COMMIT_SHA}"
     - VERSION="${CI_COMMIT_TAG#v}"
-    - ssh gitlab-ci@10.10.10.109 "VERSION='${VERSION}' sh -s" < scripts/bsd-build.sh
+    - ssh gitlab-ci@10.10.10.109 "REF='${REF}' VERSION='${VERSION}' sh -s" < scripts/bsd-build.sh
     - scp gitlab-ci@10.10.10.109:zfstop/target/release/zfstop zfstop-freebsd-amd64
     - sha256sum zfstop-freebsd-amd64 | cut -d' ' -f1 > zfstop-freebsd-amd64.sha256
   artifacts:

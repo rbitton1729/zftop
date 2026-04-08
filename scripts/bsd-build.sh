@@ -3,33 +3,43 @@
 # Build script that runs ON bsd-1 (the FreeBSD CI host) inside a fresh SSH
 # session. The GitLab CI job pipes this file to the remote shell:
 #
-#     ssh gitlab-ci@bsd-1 "VERSION='${VERSION}' sh -s" < scripts/bsd-build.sh
+#     ssh gitlab-ci@bsd-1 "REF='${CI_COMMIT_SHA}' VERSION='${CI_COMMIT_TAG#v}' sh -s" \
+#         < scripts/bsd-build.sh
 #
-# Expects $VERSION to be set in the environment (e.g. "0.2.0", no "v" prefix).
+# Expected env vars:
+#
+#   REF      — the commit SHA to check out (always set, comes from $CI_COMMIT_SHA)
+#   VERSION  — the release version without the "v" prefix, e.g. "0.2.0"
+#              (empty on non-tag builds — in which case Cargo.toml is NOT
+#              version-stamped, and the build keeps the in-tree "0.0.0-dev")
+#
 # Builds zfstop in release mode and leaves the binary at:
 #
 #     ~gitlab-ci/zfstop/target/release/zfstop
 #
 # The CI job then SCPs that file back into its workspace and continues.
 #
-# Idempotent — safe to re-run with the same or a different version.
+# Idempotent — safe to re-run with the same or a different REF.
 
 set -eu
-: "${VERSION:?VERSION not set; pipe with ssh \"VERSION=x.y.z sh -s\" < scripts/bsd-build.sh}"
+: "${REF:?REF not set; pipe with ssh \"REF=<sha> VERSION=<ver-or-empty> sh -s\" < scripts/bsd-build.sh}"
 
 cd "$HOME/zfstop"
 
-# Fetch tags so we can check out the release tag the CI is building.
-git fetch --tags --force
+# Pull anything new (branches and tags) so we can resolve REF below.
+git fetch --tags --force origin
 
-# Check out the tag. Use a clean reset to wipe any prior CI run's
-# version-rewrite of Cargo.toml.
-git checkout --force "v${VERSION}"
-git reset --hard "v${VERSION}"
+# Wipe any prior CI run's local edits (e.g. an earlier version-stamp of
+# Cargo.toml) and check out the exact commit the CI is building.
+git checkout --force "$REF"
+git reset --hard "$REF"
 
-# Stamp the version into Cargo.toml the same way the Linux jobs do.
+# Stamp the version into Cargo.toml on tag builds, the same way the Linux
+# jobs do. On branch builds (no VERSION) we leave Cargo.toml alone.
 # Note: BSD sed requires '' as the empty backup extension argument.
-sed -i '' "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
+if [ -n "${VERSION:-}" ]; then
+    sed -i '' "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
+fi
 
 # Build. Cargo lives at $HOME/.cargo/bin/cargo because rustup installs
 # per-user (see scripts/setup-bsd-ci.sh).
