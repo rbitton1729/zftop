@@ -202,7 +202,11 @@ aur:
   script:
     - pacman -Sy --noconfirm openssh git curl
     - mkdir -p ~/.ssh
-    - cp "$AUR_SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
+    # Same SSH key as build:freebsd — the public half is registered both on
+    # bsd-1's gitlab-ci user and on the AUR account. AUR auth is per-user
+    # (not per-package), so one key gets us push access to every package on
+    # the rbitton AUR account.
+    - cp "$BSD_SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
     - chmod 600 ~/.ssh/id_ed25519
     - echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" >> ~/.ssh/known_hosts
     - git config --global user.name "Raphael Bitton"
@@ -210,13 +214,13 @@ aur:
     - VERSION="${CI_COMMIT_TAG#v}"
     # Use the same hash from the build
     - BINARY_SHA256=$(cat "${CI_PROJECT_DIR}/zftop-linux-amd64.sha256")
-    - LICENCE_SHA256=$(curl -sL "https://git.skylantix.com/rbitton/zftop/-/raw/v${VERSION}/LICENCE" | sha256sum | cut -d' ' -f1)
+    - LICENSE_SHA256=$(curl -sL "https://git.skylantix.com/rbitton/zftop/-/raw/v${VERSION}/LICENSE" | sha256sum | cut -d' ' -f1)
     # Clone AUR and update PKGBUILD
     - git clone ssh://aur@aur.archlinux.org/zftop.git aur-repo
     - cd aur-repo
     - cp "${CI_PROJECT_DIR}/aur/PKGBUILD" .
     - sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
-    - sed -i "s/^sha256sums=.*/sha256sums=('${BINARY_SHA256}' '${LICENCE_SHA256}')/" PKGBUILD
+    - sed -i "s/^sha256sums=.*/sha256sums=('${BINARY_SHA256}' '${LICENSE_SHA256}')/" PKGBUILD
     # Generate .SRCINFO (makepkg needs non-root)
     - useradd -m builder
     - chown -R builder:builder .

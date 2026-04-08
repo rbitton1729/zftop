@@ -152,7 +152,7 @@ fn print_help() {
     println!();
     println!("On FreeBSD, --source and --meminfo are ignored; data is read via sysctl.");
     println!();
-    println!("Copyright (c) 2026 Raphael Bitton. Licensed under MIT.");
+    println!("Copyright (c) 2026 Raphael Bitton. Licensed under GPLv3 or later.");
 }
 
 fn parse_args() -> (PathBuf, Option<PathBuf>, Duration) {
