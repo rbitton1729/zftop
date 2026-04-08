@@ -21,6 +21,18 @@ A single screen that refreshes once a second:
 
 On Linux all of this comes from `/proc/spl/kstat/zfs/arcstats` and `/proc/meminfo`. On FreeBSD it comes from `sysctl kstat.zfs.misc.arcstats.*` and `sysctl vm.stats.vm.*`. No subprocesses, no parsing of human-formatted CLI output, no surprises.
 
+## How the RAM bar math works
+
+On Linux:
+
+- **User+Kernel** = `MemTotal − MemFree − (Buffers + Cached + SReclaimable) − ARC footprint`
+- **ARC** = `arcstats.size + arcstats.overhead_size`. The second term is ABD scatter waste plus compression bookkeeping — real RAM that ZFS holds but that isn't counted in `size`.
+- **Buf/Cache** = `Buffers + Cached + SReclaimable`
+- Empty tail = `MemFree`. Smaller than htop's empty tail, which uses `MemAvailable`. zftop reports what's currently held, not what could be reclaimed under pressure.
+- **ZFS available** (right side of the bar) = `arcstats.memory_available_bytes`, ZFS's own reclaim estimate, so you can reconcile zftop's "almost full" bar against htop's "lots of free."
+
+FreeBSD uses `Wired` / `ARC` / `Active` / `Inactive+Laundry` instead, because its memory accounting is page-based rather than category-based.
+
 ## Install
 
 ### Arch Linux (AUR)

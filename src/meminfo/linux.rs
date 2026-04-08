@@ -44,7 +44,9 @@ impl MemInfo {
         self.buffers + self.cached + self.s_reclaimable
     }
 
-    /// Memory used by applications (excluding buffers/cache/ARC).
+    /// Memory not accounted for by free pages, the buf/cache categories, or
+    /// the supplied ARC byte count. Includes userspace processes plus non-ARC
+    /// kernel allocations (slab, anonymous kernel pages).
     pub fn app_used(&self, arc_bytes: u64) -> u64 {
         let arc_kb = arc_bytes / 1024;
         self.total
@@ -107,7 +109,7 @@ impl MemSource for LinuxMemSource {
             total_bytes: m.total * 1024,
             segments: vec![
                 RamSegment {
-                    label: "App",
+                    label: "User+Kernel",
                     color: Color::Green,
                     bytes: app_used_kb * 1024,
                 },
@@ -173,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn app_used_subtracts_arc() {
+    fn app_used_subtracts_supplied_arc_value() {
         let m = fixture();
         let arc_bytes: u64 = 12_345_678_912;
         let arc_kb = arc_bytes / 1024;
@@ -190,7 +192,7 @@ mod tests {
         let snap = src.snapshot(arc_bytes).unwrap();
         assert_eq!(snap.total_bytes, 32_768_000 * 1024);
         assert_eq!(snap.segments.len(), 3);
-        assert_eq!(snap.segments[0].label, "App");
+        assert_eq!(snap.segments[0].label, "User+Kernel");
         assert_eq!(snap.segments[1].label, "ARC");
         assert_eq!(snap.segments[1].bytes, arc_bytes);
         assert_eq!(snap.segments[2].label, "Buf/Cache");

@@ -31,7 +31,7 @@ impl App {
         let current = arc_reader()?;
         let mem_snapshot = mem_source
             .as_mut()
-            .and_then(|s| s.snapshot(current.size));
+            .and_then(|s| s.snapshot(current.size + current.overhead_size));
         Ok(Self {
             current,
             previous: None,
@@ -52,7 +52,7 @@ impl App {
         self.mem_snapshot = self
             .mem_source
             .as_ref()
-            .and_then(|s| s.snapshot(self.current.size));
+            .and_then(|s| s.snapshot(self.current.size + self.current.overhead_size));
         Ok(())
     }
 
@@ -190,6 +190,7 @@ pub fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
 
     fn sample_stats() -> ArcStats {
         ArcStats {
@@ -245,6 +246,27 @@ mod tests {
             mem_source: None,
             mem_snapshot: None,
             should_quit: false,
+        }
+    }
+
+    /// Test stub: echoes the `arc_bytes` it receives back as a single segment,
+    /// so tests can assert what App passed into `MemSource::snapshot()`.
+    struct EchoMemSource;
+
+    impl MemSource for EchoMemSource {
+        fn refresh(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn snapshot(&self, arc_bytes: u64) -> Option<MemSnapshot> {
+            Some(MemSnapshot {
+                total_bytes: 100 * 1024 * 1024 * 1024, // 100 GiB, arbitrary
+                segments: vec![RamSegment {
+                    label: "Echo",
+                    color: Color::Magenta,
+                    bytes: arc_bytes,
+                }],
+            })
         }
     }
 
@@ -314,5 +336,32 @@ mod tests {
         assert_eq!(format_bytes(1048576), "1.0 MiB");
         assert_eq!(format_bytes(1073741824), "1.0 GiB");
         assert_eq!(format_bytes(1099511627776), "1.0 TiB");
+    }
+
+    #[test]
+    fn snapshot_uses_arc_size_plus_overhead() {
+        // The bar's ARC segment must reflect size + overhead_size, not just size.
+        // overhead_size (ABD scatter waste, compression bookkeeping) is real RAM
+        // that ZFS holds but isn't counted in `size`.
+        let stats = sample_stats();
+        let expected = stats.size + stats.overhead_size;
+
+        let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
+            Box::new(move || Ok(sample_stats()));
+        let mem_source: Option<Box<dyn MemSource>> = Some(Box::new(EchoMemSource));
+
+        let app = App::new(arc_reader, mem_source).expect("App::new should succeed");
+        let snap = app.mem_snapshot.expect("snapshot should be present");
+
+        assert_eq!(
+            snap.segments.len(),
+            1,
+            "EchoMemSource emits exactly one segment"
+        );
+        assert_eq!(
+            snap.segments[0].bytes, expected,
+            "App should pass size + overhead_size into MemSource::snapshot, \
+             but EchoMemSource received a different value"
+        );
     }
 }

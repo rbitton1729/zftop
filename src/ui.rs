@@ -107,28 +107,30 @@ fn draw_ram_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut title_spans: Vec<Span> = Vec::with_capacity(1 + segments.len());
     title_spans.push(Span::raw(format!(
-        " {}/{} ({:.1}%) ",
+        " Total: {}/{} ({:.1}%) ",
         format_bytes(used_total),
         format_bytes(total_bytes),
         used_pct,
     )));
     for seg in segments {
         title_spans.push(Span::styled(
-            format!(
-                "{} {} ({:.1}%) ",
-                seg.label,
-                format_bytes(seg.bytes),
-                seg.bytes as f64 / total_bytes as f64 * 100.0,
-            ),
+            format!("{} {} ", seg.label, format_bytes(seg.bytes)),
             Style::default().fg(seg.color),
         ));
     }
     let bottom_title = Line::from(title_spans);
 
+    let zfs_available_title = Line::from(format!(
+        " ZFS available: {} ",
+        format_bytes(app.current.memory_available_bytes)
+    ))
+    .right_aligned();
+
     let block = Block::default()
         .borders(Borders::ALL)
         .title("System RAM")
-        .title_bottom(bottom_title);
+        .title_bottom(bottom_title)
+        .title_bottom(zfs_available_title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
