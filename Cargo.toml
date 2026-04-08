@@ -3,6 +3,12 @@ name = "zftop"
 version = "0.0.0-dev"
 edition = "2024"
 license = "GPL-3.0-or-later"
+description = "A terminal dashboard for the Zettabyte File System, in the spirit of htop."
+homepage = "https://git.skylantix.com/rbitton/zftop"
+repository = "https://git.skylantix.com/rbitton/zftop"
+readme = "README.md"
+keywords = ["zfs", "openzfs", "tui", "monitoring", "htop"]
+categories = ["command-line-utilities", "filesystem"]
 
 [dependencies]
 anyhow = "1"

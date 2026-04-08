@@ -30,8 +30,10 @@ REPO_URL="https://git.skylantix.com/rbitton/zftop.git"
 REPO_DIR="${USER_HOME}/zftop"
 
 # Public key for the CI → bsd-1 connection. The matching private key lives in
-# GitLab as the BSD_SSH_PRIVATE_KEY file variable.
-PUBKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN7gBuKsw9aTLXuOTwRAhEf67NmYo2dR9EVH1IP8vQ+7 gitlab-ci@bsd-1 (zftop CI)'
+# GitLab as the BSD_SSH_PRIVATE_KEY file variable. The same keypair also
+# auths the rbitton AUR account, so adding this key here gives push access
+# to both bsd-1 and AUR.
+PUBKEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPbNhXrw3WsI2ZQIcp1Q0xlv8NO5v35yUc9ThsBqHfNo zftop-ci-deploy'
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "error: must run as root" >&2
