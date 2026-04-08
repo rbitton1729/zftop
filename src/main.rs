@@ -134,7 +134,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App, int
 
 fn print_help() {
     let version = env!("CARGO_PKG_VERSION");
-    println!("zftop {version} — a terminal dashboard for ZFS");
+    println!("zftop {version} — a terminal dashboard for the Zettabyte File System");
     println!();
     println!("USAGE:");
     println!("    zftop [OPTIONS]");
