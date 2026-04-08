@@ -1,9 +1,14 @@
-// Parse /proc/meminfo for system memory overview.
+// Linux source: parse /proc/meminfo into a `MemInfo` and assemble a
+// `LinuxMemSource` that produces RAM bar snapshots in the htop-style
+// App / ARC / Buf-Cache layout.
 
 use anyhow::{Context, Result};
+use ratatui::style::Color;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::{MemSnapshot, MemSource, RamSegment};
 
 #[derive(Debug, Clone)]
 pub struct MemInfo {
@@ -72,6 +77,55 @@ fn get_kb(map: &HashMap<String, u64>, key: &str) -> Result<u64> {
         .with_context(|| format!("missing field '{key}' in meminfo"))
 }
 
+/// `MemSource` impl that reads `/proc/meminfo` on each refresh.
+pub struct LinuxMemSource {
+    path: PathBuf,
+    last: Option<MemInfo>,
+}
+
+impl LinuxMemSource {
+    pub fn new(path: PathBuf) -> Self {
+        let last = MemInfo::from_path(&path).ok();
+        Self { path, last }
+    }
+}
+
+impl MemSource for LinuxMemSource {
+    fn refresh(&mut self) -> Result<()> {
+        self.last = Some(MemInfo::from_path(&self.path)?);
+        Ok(())
+    }
+
+    fn snapshot(&self, arc_bytes: u64) -> Option<MemSnapshot> {
+        let m = self.last.as_ref()?;
+        if m.total == 0 {
+            return None;
+        }
+        let app_used_kb = m.app_used(arc_bytes);
+        let buf_cache_kb = m.buf_cache();
+        Some(MemSnapshot {
+            total_bytes: m.total * 1024,
+            segments: vec![
+                RamSegment {
+                    label: "App",
+                    color: Color::Green,
+                    bytes: app_used_kb * 1024,
+                },
+                RamSegment {
+                    label: "ARC",
+                    color: Color::Magenta,
+                    bytes: arc_bytes,
+                },
+                RamSegment {
+                    label: "Buf/Cache",
+                    color: Color::Yellow,
+                    bytes: buf_cache_kb * 1024,
+                },
+            ],
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,18 +169,32 @@ mod tests {
     #[test]
     fn buf_cache_includes_sreclaimable() {
         let m = fixture();
-        // buffers + cached + s_reclaimable
         assert_eq!(m.buf_cache(), 512_000 + 2_048_000 + 1_024_000);
     }
 
     #[test]
     fn app_used_subtracts_arc() {
         let m = fixture();
-        // total - free - buf_cache - arc_kb
-        // 32768000 - 4096000 - (512000 + 2048000 + 1024000) - (12345678912/1024)
         let arc_bytes: u64 = 12_345_678_912;
         let arc_kb = arc_bytes / 1024;
         let expected = 32_768_000 - 4_096_000 - 3_584_000 - arc_kb;
         assert_eq!(m.app_used(arc_bytes), expected);
+    }
+
+    #[test]
+    fn linux_mem_source_snapshot_segments() {
+        // Exercises LinuxMemSource::new and the MemSource::snapshot trait impl
+        // end-to-end against the fixture, mirroring what main.rs does at runtime.
+        let src = LinuxMemSource::new(PathBuf::from("fixtures/meminfo"));
+        let arc_bytes: u64 = 8 * 1024 * 1024 * 1024; // 8 GiB
+        let snap = src.snapshot(arc_bytes).unwrap();
+        assert_eq!(snap.total_bytes, 32_768_000 * 1024);
+        assert_eq!(snap.segments.len(), 3);
+        assert_eq!(snap.segments[0].label, "App");
+        assert_eq!(snap.segments[1].label, "ARC");
+        assert_eq!(snap.segments[1].bytes, arc_bytes);
+        assert_eq!(snap.segments[2].label, "Buf/Cache");
+        // Buf/Cache = (buffers + cached + s_reclaimable) * 1024
+        assert_eq!(snap.segments[2].bytes, (512_000 + 2_048_000 + 1_024_000) * 1024);
     }
 }

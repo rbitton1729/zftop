@@ -73,6 +73,40 @@ build:aarch64:
       - zfstop-linux-arm64
       - zfstop-linux-arm64.sha256
 
+# FreeBSD build runs on a long-lived FreeBSD VM (bsd-1, 10.10.10.109) on the
+# same internal vlan as the GitLab runner. The runner SSHes in as the
+# gitlab-ci user, pipes scripts/bsd-build.sh to the remote shell, and SCPs
+# the resulting binary back. The VM is set up by scripts/setup-bsd-ci.sh
+# (run once, by hand). Runs on every push like the Linux build jobs — the
+# downstream upload/release/aur jobs are still tag-gated, so non-tag builds
+# just produce a CI artifact and don't publish anywhere.
+build:freebsd:
+  stage: build
+  image: alpine:latest
+  cache: []
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - cp "$BSD_SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
+    - chmod 600 ~/.ssh/id_ed25519
+    # Pin the bsd-1 host key so a man-in-the-middle on the vlan can't
+    # masquerade as the build host. The key was captured at setup time
+    # via `ssh-keyscan -t ed25519 10.10.10.109`.
+    - echo "10.10.10.109 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICrhVIFj+H8gZT/VfhTB6OFKN4gflNiH05OpfWH/+8AQ" >> ~/.ssh/known_hosts
+  script:
+    # REF is the commit SHA the CI is building (always set).
+    # VERSION is the tag without the v prefix (empty string on non-tag builds,
+    # in which case bsd-build.sh skips the Cargo.toml version stamp).
+    - REF="${CI_COMMIT_SHA}"
+    - VERSION="${CI_COMMIT_TAG#v}"
+    - ssh gitlab-ci@10.10.10.109 "REF='${REF}' VERSION='${VERSION}' sh -s" < scripts/bsd-build.sh
+    - scp gitlab-ci@10.10.10.109:zfstop/target/release/zfstop zfstop-freebsd-amd64
+    - sha256sum zfstop-freebsd-amd64 | cut -d' ' -f1 > zfstop-freebsd-amd64.sha256
+  artifacts:
+    paths:
+      - zfstop-freebsd-amd64
+      - zfstop-freebsd-amd64.sha256
+
 upload:
   stage: upload
   image: curlimages/curl:latest
@@ -80,6 +114,8 @@ upload:
     - job: build:x86_64
       artifacts: true
     - job: build:aarch64
+      artifacts: true
+    - job: build:freebsd
       artifacts: true
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
@@ -101,6 +137,14 @@ upload:
       curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
            --upload-file zfstop-linux-arm64.sha256 \
            "${PACKAGE_URL}/${VERSION}/zfstop-linux-arm64.sha256"
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+           --upload-file zfstop-freebsd-amd64 \
+           "${PACKAGE_URL}/${VERSION}/zfstop-freebsd-amd64"
+    - |
+      curl --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
+           --upload-file zfstop-freebsd-amd64.sha256 \
+           "${PACKAGE_URL}/${VERSION}/zfstop-freebsd-amd64.sha256"
 
 release:
   stage: release
@@ -110,12 +154,15 @@ release:
       artifacts: true
     - job: build:aarch64
       artifacts: true
+    - job: build:freebsd
+      artifacts: true
     - job: upload
   rules:
     - if: $CI_COMMIT_TAG =~ /^v/
   script:
     - AMD64_SHA256=$(cat zfstop-linux-amd64.sha256)
     - ARM64_SHA256=$(cat zfstop-linux-arm64.sha256)
+    - FREEBSD_SHA256=$(cat zfstop-freebsd-amd64.sha256)
     - VERSION="${CI_COMMIT_TAG#v}"
     - echo "## Checksums" > description.md
     - echo "" >> description.md
@@ -123,6 +170,7 @@ release:
     - echo "|------|--------|" >> description.md
     - echo "| zfstop-linux-amd64 | \`${AMD64_SHA256}\` |" >> description.md
     - echo "| zfstop-linux-arm64 | \`${ARM64_SHA256}\` |" >> description.md
+    - echo "| zfstop-freebsd-amd64 | \`${FREEBSD_SHA256}\` |" >> description.md
   release:
     tag_name: ${CI_COMMIT_TAG}
     name: "zfstop ${CI_COMMIT_TAG}"
@@ -135,6 +183,9 @@ release:
         - name: zfstop-linux-arm64
           url: "${PACKAGE_URL}/${CI_COMMIT_TAG#v}/zfstop-linux-arm64"
           filepath: /zfstop-linux-arm64
+        - name: zfstop-freebsd-amd64
+          url: "${PACKAGE_URL}/${CI_COMMIT_TAG#v}/zfstop-freebsd-amd64"
+          filepath: /zfstop-freebsd-amd64
 
 aur:
   stage: publish
@@ -144,7 +195,10 @@ aur:
       artifacts: true
     - job: upload
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
+    # Only push to AUR on stable semver tags, not pre-release / rc tags.
+    # Lets you tag v0.1.0-rc1 to dry-run the rest of the pipeline without
+    # leaking a junk version to AUR users.
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/
   script:
     - pacman -Sy --noconfirm openssh git curl
     - mkdir -p ~/.ssh

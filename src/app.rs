@@ -2,19 +2,18 @@
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::path::PathBuf;
 
 use crate::arcstats::ArcStats;
-use crate::meminfo::MemInfo;
-
-const DEFAULT_MEMINFO: &str = "/proc/meminfo";
+use crate::meminfo::{MemSnapshot, MemSource, RamSegment};
 
 pub struct App {
     pub current: ArcStats,
     pub previous: Option<ArcStats>,
-    pub meminfo: Option<MemInfo>,
-    pub meminfo_source: PathBuf,
-    pub source: PathBuf,
+    /// Closure that reads a fresh `ArcStats` snapshot. Constructed in `main.rs`
+    /// per OS — Linux wraps a procfs path, FreeBSD wraps a sysctl call.
+    arc_reader: Box<dyn FnMut() -> Result<ArcStats>>,
+    pub mem_source: Option<Box<dyn MemSource>>,
+    pub mem_snapshot: Option<MemSnapshot>,
     pub should_quit: bool,
 }
 
@@ -25,24 +24,35 @@ pub struct BreakdownRow {
 }
 
 impl App {
-    pub fn new(source: PathBuf, meminfo_source: Option<PathBuf>) -> Result<Self> {
-        let current = ArcStats::from_path(&source)?;
-        let meminfo_path = meminfo_source.unwrap_or_else(|| PathBuf::from(DEFAULT_MEMINFO));
-        let meminfo = MemInfo::from_path(&meminfo_path).ok();
+    pub fn new(
+        mut arc_reader: Box<dyn FnMut() -> Result<ArcStats>>,
+        mut mem_source: Option<Box<dyn MemSource>>,
+    ) -> Result<Self> {
+        let current = arc_reader()?;
+        let mem_snapshot = mem_source
+            .as_mut()
+            .and_then(|s| s.snapshot(current.size));
         Ok(Self {
             current,
             previous: None,
-            meminfo,
-            meminfo_source: meminfo_path,
-            source,
+            arc_reader,
+            mem_source,
+            mem_snapshot,
             should_quit: false,
         })
     }
 
     pub fn refresh(&mut self) -> Result<()> {
-        let next = ArcStats::from_path(&self.source)?;
+        let next = (self.arc_reader)()?;
         self.previous = Some(std::mem::replace(&mut self.current, next));
-        self.meminfo = MemInfo::from_path(&self.meminfo_source).ok();
+        if let Some(mem) = self.mem_source.as_mut() {
+            // Memory refresh failures are non-fatal — the bar just won't update.
+            let _ = mem.refresh();
+        }
+        self.mem_snapshot = self
+            .mem_source
+            .as_ref()
+            .and_then(|s| s.snapshot(self.current.size));
         Ok(())
     }
 
@@ -140,15 +150,11 @@ impl App {
         }
     }
 
-    /// RAM breakdown segments (in KiB) for the stacked bar.
-    /// Returns: (app_used, buffers_cache, arc, free) — all in KiB.
-    pub fn ram_segments(&self) -> Option<(u64, u64, u64, u64)> {
-        let m = self.meminfo.as_ref()?;
-        let arc_kb = self.current.size / 1024;
-        let app_used = m.app_used(self.current.size);
-        let buf_cache = m.buf_cache();
-        let free = m.free;
-        Some((app_used, buf_cache, arc_kb, free))
+    /// Returns the cached system-RAM snapshot for the UI.
+    pub fn ram_segments(&self) -> Option<(u64, &[RamSegment])> {
+        self.mem_snapshot
+            .as_ref()
+            .map(|s| (s.total_bytes, s.segments.as_slice()))
     }
 }
 
@@ -229,57 +235,42 @@ mod tests {
         }
     }
 
+    /// Build an `App` with no live sources — used by derived-metric tests
+    /// that don't exercise refresh().
+    fn app_with(current: ArcStats, previous: Option<ArcStats>) -> App {
+        App {
+            current,
+            previous,
+            arc_reader: Box::new(|| panic!("arc_reader not used in this test")),
+            mem_source: None,
+            mem_snapshot: None,
+            should_quit: false,
+        }
+    }
+
     #[test]
     fn overall_hit_ratio() {
-        let app = App {
-            current: sample_stats(),
-            previous: None,
-            meminfo: None,
-            meminfo_source: PathBuf::new(),
-            source: PathBuf::new(),
-            should_quit: false,
-        };
+        let app = app_with(sample_stats(), None);
         assert!((app.hit_ratio_overall() - 90.0).abs() < 0.01);
     }
 
     #[test]
     fn demand_hit_ratio() {
-        let app = App {
-            current: sample_stats(),
-            previous: None,
-            meminfo: None,
-            meminfo_source: PathBuf::new(),
-            source: PathBuf::new(),
-            should_quit: false,
-        };
+        let app = app_with(sample_stats(), None);
         // (5000+3000) / (5000+3000+500+300) = 8000/8800 ≈ 90.909%
         assert!((app.hit_ratio_demand() - 90.909).abs() < 0.01);
     }
 
     #[test]
     fn prefetch_hit_ratio() {
-        let app = App {
-            current: sample_stats(),
-            previous: None,
-            meminfo: None,
-            meminfo_source: PathBuf::new(),
-            source: PathBuf::new(),
-            should_quit: false,
-        };
+        let app = app_with(sample_stats(), None);
         // (800+200) / (800+200+150+50) = 1000/1200 ≈ 83.333%
         assert!((app.hit_ratio_prefetch() - 83.333).abs() < 0.01);
     }
 
     #[test]
     fn throughput_none_without_previous() {
-        let app = App {
-            current: sample_stats(),
-            previous: None,
-            meminfo: None,
-            meminfo_source: PathBuf::new(),
-            source: PathBuf::new(),
-            should_quit: false,
-        };
+        let app = app_with(sample_stats(), None);
         assert!(app.throughput_hits().is_none());
         assert!(app.throughput_misses().is_none());
     }
@@ -289,48 +280,26 @@ mod tests {
         let mut prev = sample_stats();
         prev.hits = 8000;
         prev.misses = 900;
-        let app = App {
-            current: sample_stats(),
-            previous: Some(prev),
-            meminfo: None,
-            meminfo_source: PathBuf::new(),
-            source: PathBuf::new(),
-            should_quit: false,
-        };
+        let app = app_with(sample_stats(), Some(prev));
         assert_eq!(app.throughput_hits(), Some(1000));
         assert_eq!(app.throughput_misses(), Some(100));
     }
 
     #[test]
     fn arc_usage() {
-        let app = App {
-            current: sample_stats(),
-            previous: None,
-            meminfo: None,
-            meminfo_source: PathBuf::new(),
-            source: PathBuf::new(),
-            should_quit: false,
-        };
+        let app = app_with(sample_stats(), None);
         assert!((app.arc_usage_pct() - 0.625).abs() < 0.001);
     }
 
     #[test]
     fn breakdown_has_expected_categories() {
-        let app = App {
-            current: sample_stats(),
-            previous: None,
-            meminfo: None,
-            meminfo_source: PathBuf::new(),
-            source: PathBuf::new(),
-            should_quit: false,
-        };
+        let app = app_with(sample_stats(), None);
         let rows = app.arc_breakdown();
         let labels: Vec<&str> = rows.iter().map(|r| r.label).collect();
         assert!(labels.contains(&"MFU data"));
         assert!(labels.contains(&"MRU data"));
         assert!(labels.contains(&"Anon"));
         assert!(labels.contains(&"Headers"));
-        // All percentages should be relative to total size
         for row in &rows {
             assert!(row.pct >= 0.0 && row.pct <= 100.0);
         }

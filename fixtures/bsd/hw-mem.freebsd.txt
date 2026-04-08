@@ -1,0 +1,3 @@
+hw.physmem: 4250365952
+hw.realmem: 4294967296
+hw.pagesize: 4096
