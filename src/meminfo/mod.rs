@@ -33,10 +33,13 @@ pub struct MemSnapshot {
 /// Pluggable source of system memory state.
 ///
 /// Implementations are constructed once at startup and `refresh()`-ed each
-/// tick. `snapshot(arc_bytes)` then composes a `MemSnapshot` using the
-/// last-fetched data plus the current ARC size (which is sourced separately
-/// from `ArcStats` because the ARC is part of the wired/anonymous accounting).
+/// tick. `snapshot(arc_segments)` then composes a `MemSnapshot` using the
+/// last-fetched data plus pre-built ARC segments supplied by the caller
+/// (the ARC is sourced separately from `ArcStats` because it's part of the
+/// wired/anonymous accounting). Callers pass one or more `RamSegment`s so
+/// they can split ARC into sub-segments (e.g. `size` vs `overhead_size`)
+/// without `meminfo` needing to know what counts as ARC.
 pub trait MemSource {
     fn refresh(&mut self) -> Result<()>;
-    fn snapshot(&self, arc_bytes: u64) -> Option<MemSnapshot>;
+    fn snapshot(&self, arc_segments: &[RamSegment]) -> Option<MemSnapshot>;
 }

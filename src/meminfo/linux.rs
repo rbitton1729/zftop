@@ -98,32 +98,31 @@ impl MemSource for LinuxMemSource {
         Ok(())
     }
 
-    fn snapshot(&self, arc_bytes: u64) -> Option<MemSnapshot> {
+    fn snapshot(&self, arc_segments: &[RamSegment]) -> Option<MemSnapshot> {
         let m = self.last.as_ref()?;
         if m.total == 0 {
             return None;
         }
-        let app_used_kb = m.app_used(arc_bytes);
+        let arc_total: u64 = arc_segments.iter().map(|s| s.bytes).sum();
+        let app_used_kb = m.app_used(arc_total);
         let buf_cache_kb = m.buf_cache();
+
+        let mut segments = Vec::with_capacity(2 + arc_segments.len());
+        segments.push(RamSegment {
+            label: "User+Kernel",
+            color: Color::Green,
+            bytes: app_used_kb * 1024,
+        });
+        segments.extend(arc_segments.iter().cloned());
+        segments.push(RamSegment {
+            label: "Buf/Cache",
+            color: Color::Yellow,
+            bytes: buf_cache_kb * 1024,
+        });
+
         Some(MemSnapshot {
             total_bytes: m.total * 1024,
-            segments: vec![
-                RamSegment {
-                    label: "User+Kernel",
-                    color: Color::Green,
-                    bytes: app_used_kb * 1024,
-                },
-                RamSegment {
-                    label: "ARC",
-                    color: Color::Magenta,
-                    bytes: arc_bytes,
-                },
-                RamSegment {
-                    label: "Buf/Cache",
-                    color: Color::Yellow,
-                    bytes: buf_cache_kb * 1024,
-                },
-            ],
+            segments,
         })
     }
 }
@@ -188,15 +187,28 @@ mod tests {
         // Exercises LinuxMemSource::new and the MemSource::snapshot trait impl
         // end-to-end against the fixture, mirroring what main.rs does at runtime.
         let src = LinuxMemSource::new(PathBuf::from("fixtures/meminfo"));
-        let arc_bytes: u64 = 8 * 1024 * 1024 * 1024; // 8 GiB
-        let snap = src.snapshot(arc_bytes).unwrap();
+        let arc_size: u64 = 7 * 1024 * 1024 * 1024; // 7 GiB
+        let arc_ovh: u64 = 1024 * 1024 * 1024; // 1 GiB
+        let arc_segs = vec![
+            RamSegment { label: "ARC", color: Color::Magenta, bytes: arc_size },
+            RamSegment { label: "ARC ovh", color: Color::Indexed(53), bytes: arc_ovh },
+        ];
+        let snap = src.snapshot(&arc_segs).unwrap();
         assert_eq!(snap.total_bytes, 32_768_000 * 1024);
-        assert_eq!(snap.segments.len(), 3);
+        // User+Kernel, ARC, ARC ovh, Buf/Cache = 4
+        assert_eq!(snap.segments.len(), 4);
         assert_eq!(snap.segments[0].label, "User+Kernel");
+
+        // ARC sub-segments preserved verbatim, in the order the caller supplied.
         assert_eq!(snap.segments[1].label, "ARC");
-        assert_eq!(snap.segments[1].bytes, arc_bytes);
-        assert_eq!(snap.segments[2].label, "Buf/Cache");
+        assert_eq!(snap.segments[1].bytes, arc_size);
+        assert_eq!(snap.segments[1].color, Color::Magenta);
+        assert_eq!(snap.segments[2].label, "ARC ovh");
+        assert_eq!(snap.segments[2].bytes, arc_ovh);
+        assert_eq!(snap.segments[2].color, Color::Indexed(53));
+
+        assert_eq!(snap.segments[3].label, "Buf/Cache");
         // Buf/Cache = (buffers + cached + s_reclaimable) * 1024
-        assert_eq!(snap.segments[2].bytes, (512_000 + 2_048_000 + 1_024_000) * 1024);
+        assert_eq!(snap.segments[3].bytes, (512_000 + 2_048_000 + 1_024_000) * 1024);
     }
 }

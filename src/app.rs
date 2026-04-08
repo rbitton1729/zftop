@@ -2,9 +2,35 @@
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::Color;
 
 use crate::arcstats::ArcStats;
 use crate::meminfo::{MemSnapshot, MemSource, RamSegment};
+
+/// ARC sub-segment colours for the RAM bar. `size` is the primary ARC, drawn
+/// in the familiar magenta; `overhead_size` (ABD scatter waste + compression
+/// bookkeeping) sits adjacent in a darker purple so the extra footprint is
+/// visible without being mistaken for a separate category.
+const ARC_SIZE_COLOR: Color = Color::Indexed(171); // xterm256 #D75FFF
+const ARC_OVERHEAD_COLOR: Color = Color::Magenta;
+
+/// Build the ARC sub-segments the RAM bar should render for a given snapshot.
+/// Both `App::new` and `App::refresh` funnel through this so the two call
+/// sites can't drift apart.
+fn arc_segments(stats: &ArcStats) -> Vec<RamSegment> {
+    vec![
+        RamSegment {
+            label: "ARC",
+            color: ARC_SIZE_COLOR,
+            bytes: stats.size,
+        },
+        RamSegment {
+            label: "ARC ovh",
+            color: ARC_OVERHEAD_COLOR,
+            bytes: stats.overhead_size,
+        },
+    ]
+}
 
 pub struct App {
     pub current: ArcStats,
@@ -29,9 +55,8 @@ impl App {
         mut mem_source: Option<Box<dyn MemSource>>,
     ) -> Result<Self> {
         let current = arc_reader()?;
-        let mem_snapshot = mem_source
-            .as_mut()
-            .and_then(|s| s.snapshot(current.size + current.overhead_size));
+        let arc_segs = arc_segments(&current);
+        let mem_snapshot = mem_source.as_mut().and_then(|s| s.snapshot(&arc_segs));
         Ok(Self {
             current,
             previous: None,
@@ -49,10 +74,8 @@ impl App {
             // Memory refresh failures are non-fatal — the bar just won't update.
             let _ = mem.refresh();
         }
-        self.mem_snapshot = self
-            .mem_source
-            .as_ref()
-            .and_then(|s| s.snapshot(self.current.size + self.current.overhead_size));
+        let arc_segs = arc_segments(&self.current);
+        self.mem_snapshot = self.mem_source.as_ref().and_then(|s| s.snapshot(&arc_segs));
         Ok(())
     }
 
@@ -190,7 +213,6 @@ pub fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::style::Color;
 
     fn sample_stats() -> ArcStats {
         ArcStats {
@@ -249,8 +271,9 @@ mod tests {
         }
     }
 
-    /// Test stub: echoes the `arc_bytes` it receives back as a single segment,
-    /// so tests can assert what App passed into `MemSource::snapshot()`.
+    /// Test stub: echoes the `arc_segments` slice it receives back as the
+    /// snapshot's segments verbatim, so tests can assert exactly what App
+    /// passed into `MemSource::snapshot()` — labels, colours and byte counts.
     struct EchoMemSource;
 
     impl MemSource for EchoMemSource {
@@ -258,14 +281,10 @@ mod tests {
             Ok(())
         }
 
-        fn snapshot(&self, arc_bytes: u64) -> Option<MemSnapshot> {
+        fn snapshot(&self, arc_segments: &[RamSegment]) -> Option<MemSnapshot> {
             Some(MemSnapshot {
                 total_bytes: 100 * 1024 * 1024 * 1024, // 100 GiB, arbitrary
-                segments: vec![RamSegment {
-                    label: "Echo",
-                    color: Color::Magenta,
-                    bytes: arc_bytes,
-                }],
+                segments: arc_segments.to_vec(),
             })
         }
     }
@@ -339,12 +358,14 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_uses_arc_size_plus_overhead() {
-        // The bar's ARC segment must reflect size + overhead_size, not just size.
-        // overhead_size (ABD scatter waste, compression bookkeeping) is real RAM
-        // that ZFS holds but isn't counted in `size`.
+    fn app_passes_two_arc_segments_size_and_overhead() {
+        // The RAM bar should get TWO adjacent ARC sub-segments: primary `size`
+        // in the familiar magenta, and `overhead_size` (ABD scatter waste,
+        // compression bookkeeping — real RAM not counted in `size`) in a
+        // darker purple so the extra footprint is visible but visually tied
+        // to ARC. Both segments must arrive through MemSource::snapshot so
+        // meminfo stays agnostic about what counts as ARC.
         let stats = sample_stats();
-        let expected = stats.size + stats.overhead_size;
 
         let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
             Box::new(move || Ok(sample_stats()));
@@ -355,13 +376,23 @@ mod tests {
 
         assert_eq!(
             snap.segments.len(),
-            1,
-            "EchoMemSource emits exactly one segment"
+            2,
+            "App should pass two ARC sub-segments (size + overhead_size)"
         );
-        assert_eq!(
-            snap.segments[0].bytes, expected,
-            "App should pass size + overhead_size into MemSource::snapshot, \
-             but EchoMemSource received a different value"
+
+        assert_eq!(snap.segments[0].label, "ARC");
+        assert_eq!(snap.segments[0].bytes, stats.size);
+        assert_eq!(snap.segments[0].color, ARC_SIZE_COLOR);
+
+        assert_eq!(snap.segments[1].label, "ARC ovh");
+        assert_eq!(snap.segments[1].bytes, stats.overhead_size);
+        assert_eq!(snap.segments[1].color, ARC_OVERHEAD_COLOR);
+
+        // Darker-purple guard: overhead must NOT reuse the primary ARC colour,
+        // or the split would be invisible to the user.
+        assert_ne!(
+            snap.segments[0].color, snap.segments[1].color,
+            "ARC and ARC ovh must use visually distinct colours"
         );
     }
 }

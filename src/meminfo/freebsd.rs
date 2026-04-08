@@ -128,39 +128,37 @@ impl MemSource for FreeBsdMemSource {
         }
     }
 
-    fn snapshot(&self, arc_bytes: u64) -> Option<MemSnapshot> {
+    fn snapshot(&self, arc_segments: &[RamSegment]) -> Option<MemSnapshot> {
         let m = self.last.as_ref()?;
         if m.total_bytes == 0 || m.page_size == 0 {
             return None;
         }
+        let arc_total: u64 = arc_segments.iter().map(|s| s.bytes).sum();
         let wired_bytes = m.wired_pages * m.page_size;
         let active_bytes = m.active_pages * m.page_size;
         let inactive_bytes = (m.inactive_pages + m.laundry_pages) * m.page_size;
 
+        let mut segments = Vec::with_capacity(3 + arc_segments.len());
+        segments.push(RamSegment {
+            label: "Wired",
+            color: Color::Cyan,
+            bytes: wired_bytes.saturating_sub(arc_total),
+        });
+        segments.extend(arc_segments.iter().cloned());
+        segments.push(RamSegment {
+            label: "Active",
+            color: Color::Green,
+            bytes: active_bytes,
+        });
+        segments.push(RamSegment {
+            label: "Inactive",
+            color: Color::Yellow,
+            bytes: inactive_bytes,
+        });
+
         Some(MemSnapshot {
             total_bytes: m.total_bytes,
-            segments: vec![
-                RamSegment {
-                    label: "Wired",
-                    color: Color::Cyan,
-                    bytes: wired_bytes.saturating_sub(arc_bytes),
-                },
-                RamSegment {
-                    label: "ARC",
-                    color: Color::Magenta,
-                    bytes: arc_bytes,
-                },
-                RamSegment {
-                    label: "Active",
-                    color: Color::Green,
-                    bytes: active_bytes,
-                },
-                RamSegment {
-                    label: "Inactive",
-                    color: Color::Yellow,
-                    bytes: inactive_bytes,
-                },
-            ],
+            segments,
         })
     }
 }
@@ -196,28 +194,40 @@ mod tests {
     fn snapshot_segments_match_fixture() {
         let m = fixture();
         let src = FreeBsdMemSource { last: Some(m.clone()) };
-        let arc_bytes: u64 = 1_472_594_864; // matches arcstats fixture's `size`
+        // Two ARC sub-segments: size + overhead. Sum = 1_472_594_864 (matches
+        // arcstats fixture's `size` for back-compat with wired-minus-arc math).
+        let arc_size: u64 = 1_400_000_000;
+        let arc_ovh: u64 = 72_594_864;
+        let arc_segs = vec![
+            RamSegment { label: "ARC", color: Color::Magenta, bytes: arc_size },
+            RamSegment { label: "ARC ovh", color: Color::Indexed(53), bytes: arc_ovh },
+        ];
 
-        let snap = src.snapshot(arc_bytes).unwrap();
+        let snap = src.snapshot(&arc_segs).unwrap();
         assert_eq!(snap.total_bytes, 4_250_365_952);
-        assert_eq!(snap.segments.len(), 4);
+        // Wired + 2 ARC segs + Active + Inactive = 5
+        assert_eq!(snap.segments.len(), 5);
 
-        // Wired - ARC
+        // Wired - (arc_size + arc_ovh)
         let wired_bytes = m.wired_pages * m.page_size;
         assert_eq!(snap.segments[0].label, "Wired");
-        assert_eq!(snap.segments[0].bytes, wired_bytes - arc_bytes);
+        assert_eq!(snap.segments[0].bytes, wired_bytes - (arc_size + arc_ovh));
 
-        // ARC
+        // ARC sub-segments preserved verbatim
         assert_eq!(snap.segments[1].label, "ARC");
-        assert_eq!(snap.segments[1].bytes, arc_bytes);
+        assert_eq!(snap.segments[1].bytes, arc_size);
+        assert_eq!(snap.segments[1].color, Color::Magenta);
+        assert_eq!(snap.segments[2].label, "ARC ovh");
+        assert_eq!(snap.segments[2].bytes, arc_ovh);
+        assert_eq!(snap.segments[2].color, Color::Indexed(53));
 
         // Active
-        assert_eq!(snap.segments[2].label, "Active");
-        assert_eq!(snap.segments[2].bytes, 81 * 4096);
+        assert_eq!(snap.segments[3].label, "Active");
+        assert_eq!(snap.segments[3].bytes, 81 * 4096);
 
         // Inactive + Laundry
-        assert_eq!(snap.segments[3].label, "Inactive");
-        assert_eq!(snap.segments[3].bytes, (11_358 + 4_002) * 4096);
+        assert_eq!(snap.segments[4].label, "Inactive");
+        assert_eq!(snap.segments[4].bytes, (11_358 + 4_002) * 4096);
     }
 
     #[test]
@@ -233,7 +243,10 @@ mod tests {
             free_pages: 100,
         };
         let src = FreeBsdMemSource { last: Some(m) };
-        let snap = src.snapshot(999_999_999).unwrap();
+        let arc_segs = vec![
+            RamSegment { label: "ARC", color: Color::Magenta, bytes: 999_999_999 },
+        ];
+        let snap = src.snapshot(&arc_segs).unwrap();
         assert_eq!(snap.segments[0].bytes, 0); // saturated, didn't underflow
     }
 }
