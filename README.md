@@ -48,6 +48,14 @@ sudo mv zftop-linux-amd64 /usr/bin/zftop
 
 (On FreeBSD, the conventional install path is `/usr/local/bin/zftop`.)
 
+### Cargo / crates.io
+
+```
+cargo install zftop
+```
+
+Requires a Rust toolchain (1.85 or newer for edition 2024). Builds zftop from source on your machine and drops the binary in `~/.cargo/bin/zftop`. Works on both Linux and FreeBSD.
+
 ### From source
 
 ```
