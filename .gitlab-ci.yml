@@ -194,12 +194,15 @@ release:
         - name: zftop-linux-amd64
           url: "${PACKAGE_URL}/${VERSION}/zftop-linux-amd64"
           filepath: /zftop-linux-amd64
+          link_type: package
         - name: zftop-linux-arm64
           url: "${PACKAGE_URL}/${VERSION}/zftop-linux-arm64"
           filepath: /zftop-linux-arm64
+          link_type: package
         - name: zftop-freebsd-amd64
           url: "${PACKAGE_URL}/${VERSION}/zftop-freebsd-amd64"
           filepath: /zftop-freebsd-amd64
+          link_type: package
 
 aur:
   stage: publish
