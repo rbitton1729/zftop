@@ -12,8 +12,8 @@ categories = ["command-line-utilities", "filesystem"]
 
 [dependencies]
 anyhow = "1"
-crossterm = "0.28"
-ratatui = "0.29"
+crossterm = "0.29"
+ratatui = "0.30"
 
 [target.'cfg(target_os = "freebsd")'.dependencies]
 sysctl = "0.7.1"
