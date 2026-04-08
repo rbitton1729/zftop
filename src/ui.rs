@@ -206,13 +206,11 @@ fn draw_breakdown(frame: &mut Frame, area: Rect, app: &App) {
         Constraint::Length(8),
     ];
 
-    let header = Row::new(vec!["Category", "Size", "% of ARC"])
-        .style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .bottom_margin(1);
+    let header = Row::new(vec!["Category", "Size", "% of ARC"]).style(
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let table = Table::new(rows, widths)
         .header(header)
@@ -288,13 +286,11 @@ fn draw_hit_ratios(frame: &mut Frame, area: Rect, app: &App) {
 
     let widths = [Constraint::Length(12), Constraint::Length(10)];
 
-    let header = Row::new(vec!["Type", "Hit Ratio"])
-        .style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .bottom_margin(1);
+    let header = Row::new(vec!["Type", "Hit Ratio"]).style(
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let table = Table::new(rows, widths)
         .header(header)
