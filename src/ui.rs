@@ -265,9 +265,18 @@ fn draw_hit_ratios(frame: &mut Frame, area: Rect, app: &App) {
     let rows: Vec<Row> = ratios
         .iter()
         .map(|(label, pct)| {
-            let color = if *pct >= 95.0 {
+            // Prefetch is speculative — its "good" range is workload-dependent
+            // (sequential reads can hit 90%+, random-read workloads near 0 is
+            // expected). Use looser thresholds so it isn't permanently red on
+            // random-heavy workloads where there's nothing to fix.
+            let (green_at, yellow_at) = if *label == "Prefetch" {
+                (60.0, 30.0)
+            } else {
+                (95.0, 80.0)
+            };
+            let color = if *pct >= green_at {
                 Color::Green
-            } else if *pct >= 80.0 {
+            } else if *pct >= yellow_at {
                 Color::Yellow
             } else {
                 Color::Red
