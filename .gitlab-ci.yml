@@ -30,12 +30,9 @@ test:
 
 build:x86_64:
   stage: build
-  image: messense/rust-musl-cross:x86_64-musl
+  image: rust:1-bullseye
   variables:
-    TARGET: x86_64-unknown-linux-musl
-    # The image ships /root/.cargo/config.toml with the cross-linker, but our
-    # top-level CARGO_HOME override masks it. Set the linker via env var instead.
-    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: x86_64-unknown-linux-musl-gcc
+    TARGET: x86_64-unknown-linux-gnu
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ]; then
@@ -43,7 +40,7 @@ build:x86_64:
         sed -i "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
       fi
     - cargo build --release --target ${TARGET}
-    - x86_64-unknown-linux-musl-strip target/${TARGET}/release/zftop
+    - strip target/${TARGET}/release/zftop
     - cp target/${TARGET}/release/zftop zftop-linux-amd64
     - sha256sum zftop-linux-amd64 | cut -d' ' -f1 > zftop-linux-amd64.sha256
   artifacts:
@@ -53,11 +50,21 @@ build:x86_64:
 
 build:aarch64:
   stage: build
-  image: messense/rust-musl-cross:aarch64-musl
+  image: rust:1-bullseye
   variables:
-    TARGET: aarch64-unknown-linux-musl
-    # See note on build:x86_64 — same masking issue.
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-unknown-linux-musl-gcc
+    TARGET: aarch64-unknown-linux-gnu
+    # Cross-compile linker. The cross toolchain is installed in before_script
+    # below; setting this env var tells cargo to invoke it as the linker for
+    # the aarch64 target instead of the default `cc` (which is amd64 on the
+    # host).
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+  before_script:
+    # `rust:1-bullseye` is a Debian 11 image with the host (amd64) Rust
+    # toolchain pre-installed but no cross toolchain and no aarch64 std.
+    # Pull both from apt + rustup.
+    - apt-get update
+    - apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+    - rustup target add ${TARGET}
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ]; then
@@ -65,7 +72,7 @@ build:aarch64:
         sed -i "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
       fi
     - cargo build --release --target ${TARGET}
-    - aarch64-unknown-linux-musl-strip target/${TARGET}/release/zftop
+    - aarch64-linux-gnu-strip target/${TARGET}/release/zftop
     - cp target/${TARGET}/release/zftop zftop-linux-arm64
     - sha256sum zftop-linux-arm64 | cut -d' ' -f1 > zftop-linux-arm64.sha256
   artifacts:
