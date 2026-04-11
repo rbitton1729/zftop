@@ -20,13 +20,13 @@ impl Tab {
     /// Iteration order for the tab strip and for `cycle_tab`. The order here
     /// is the order the tabs appear left-to-right on screen and the order
     /// `Tab` / `Shift+Tab` cycle through them.
-    pub const ALL: &'static [Tab] = &[Tab::Overview, Tab::Arc, Tab::Pools];
+    pub const ALL: &'static [Tab] = &[Tab::Overview, Tab::Pools, Tab::Arc];
 
     pub fn title(&self) -> &'static str {
         match self {
             Tab::Overview => "Overview",
-            Tab::Arc => "ARC",
             Tab::Pools => "Pools",
+            Tab::Arc => "ARC",
         }
     }
 
@@ -35,8 +35,8 @@ impl Tab {
     pub fn hotkey(&self) -> char {
         match self {
             Tab::Overview => '1',
-            Tab::Arc => '2',
-            Tab::Pools => '3',
+            Tab::Pools => '2',
+            Tab::Arc => '3',
         }
     }
 }
@@ -75,9 +75,10 @@ pub struct App {
     pub mem_source: Option<Box<dyn MemSource>>,
     pub mem_snapshot: Option<MemSnapshot>,
     pub should_quit: bool,
-    /// Currently-selected top-level tab. Defaults to `Tab::Arc` in v0.2b
-    /// (preserves v0.1 launch experience). Plan v0.2c flips the default to
-    /// `Tab::Overview` once Overview has real content.
+    /// Currently-selected top-level tab. Defaults to `Tab::Overview` — the
+    /// Overview tab is a placeholder in v0.2b but is the intended landing
+    /// surface from v0.2c onward, so launching there now means no default
+    /// flip later.
     pub current_tab: Tab,
 }
 
@@ -102,7 +103,7 @@ impl App {
             mem_source,
             mem_snapshot,
             should_quit: false,
-            current_tab: Tab::Arc,
+            current_tab: Tab::Overview,
         })
     }
 
@@ -152,11 +153,11 @@ impl App {
                 return;
             }
             KeyCode::Char('2') => {
-                self.current_tab = Tab::Arc;
+                self.current_tab = Tab::Pools;
                 return;
             }
             KeyCode::Char('3') => {
-                self.current_tab = Tab::Pools;
+                self.current_tab = Tab::Arc;
                 return;
             }
             KeyCode::Tab => {
@@ -350,7 +351,7 @@ mod tests {
             mem_source: None,
             mem_snapshot: None,
             should_quit: false,
-            current_tab: Tab::Arc,
+            current_tab: Tab::Overview,
         }
     }
 
@@ -441,22 +442,22 @@ mod tests {
     }
 
     #[test]
-    fn tab_all_ordered_overview_arc_pools() {
-        assert_eq!(Tab::ALL, &[Tab::Overview, Tab::Arc, Tab::Pools]);
+    fn tab_all_ordered_overview_pools_arc() {
+        assert_eq!(Tab::ALL, &[Tab::Overview, Tab::Pools, Tab::Arc]);
     }
 
     #[test]
     fn tab_titles_stable() {
         assert_eq!(Tab::Overview.title(), "Overview");
-        assert_eq!(Tab::Arc.title(), "ARC");
         assert_eq!(Tab::Pools.title(), "Pools");
+        assert_eq!(Tab::Arc.title(), "ARC");
     }
 
     #[test]
-    fn tab_hotkeys_are_1_2_3_in_order() {
+    fn tab_hotkeys_match_position() {
         assert_eq!(Tab::Overview.hotkey(), '1');
-        assert_eq!(Tab::Arc.hotkey(), '2');
-        assert_eq!(Tab::Pools.hotkey(), '3');
+        assert_eq!(Tab::Pools.hotkey(), '2');
+        assert_eq!(Tab::Arc.hotkey(), '3');
     }
 
     #[test]
@@ -464,9 +465,9 @@ mod tests {
         let mut app = app_with(sample_stats(), None);
         app.current_tab = Tab::Overview;
         app.cycle_tab(1);
-        assert_eq!(app.current_tab, Tab::Arc);
-        app.cycle_tab(1);
         assert_eq!(app.current_tab, Tab::Pools);
+        app.cycle_tab(1);
+        assert_eq!(app.current_tab, Tab::Arc);
         app.cycle_tab(1); // wraps
         assert_eq!(app.current_tab, Tab::Overview);
     }
@@ -476,9 +477,9 @@ mod tests {
         let mut app = app_with(sample_stats(), None);
         app.current_tab = Tab::Overview;
         app.cycle_tab(-1); // wraps
-        assert_eq!(app.current_tab, Tab::Pools);
-        app.cycle_tab(-1);
         assert_eq!(app.current_tab, Tab::Arc);
+        app.cycle_tab(-1);
+        assert_eq!(app.current_tab, Tab::Pools);
         app.cycle_tab(-1);
         assert_eq!(app.current_tab, Tab::Overview);
     }
@@ -496,19 +497,19 @@ mod tests {
     }
 
     #[test]
-    fn hotkey_2_switches_to_arc() {
+    fn hotkey_2_switches_to_pools() {
         let mut app = app_with(sample_stats(), None);
         app.current_tab = Tab::Overview;
         app.on_key(key(KeyCode::Char('2')));
-        assert_eq!(app.current_tab, Tab::Arc);
+        assert_eq!(app.current_tab, Tab::Pools);
     }
 
     #[test]
-    fn hotkey_3_switches_to_pools() {
+    fn hotkey_3_switches_to_arc() {
         let mut app = app_with(sample_stats(), None);
-        app.current_tab = Tab::Arc;
+        app.current_tab = Tab::Overview;
         app.on_key(key(KeyCode::Char('3')));
-        assert_eq!(app.current_tab, Tab::Pools);
+        assert_eq!(app.current_tab, Tab::Arc);
     }
 
     #[test]
@@ -516,7 +517,7 @@ mod tests {
         let mut app = app_with(sample_stats(), None);
         app.current_tab = Tab::Overview;
         app.on_key(key(KeyCode::Tab));
-        assert_eq!(app.current_tab, Tab::Arc);
+        assert_eq!(app.current_tab, Tab::Pools);
     }
 
     #[test]
@@ -524,7 +525,7 @@ mod tests {
         let mut app = app_with(sample_stats(), None);
         app.current_tab = Tab::Overview;
         app.on_key(key(KeyCode::BackTab));
-        assert_eq!(app.current_tab, Tab::Pools);
+        assert_eq!(app.current_tab, Tab::Arc);
     }
 
     #[test]
