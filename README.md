@@ -76,8 +76,8 @@ Or with any AUR helper. The package installs the binary as `zftop`.
 
 Binaries are attached to every [release](https://git.skylantix.com/rbitton/zftop/-/releases):
 
-- `zftop-linux-amd64`: Linux x86_64 (static musl, no runtime deps)
-- `zftop-linux-arm64`: Linux aarch64, static musl (Graviton, Ampere Altra, Pi 4/5)
+- `zftop-linux-amd64`: Linux x86_64 — dynamically linked against glibc 2.31+
+- `zftop-linux-arm64`: Linux aarch64 — dynamically linked against glibc 2.31+ (Graviton, Ampere Altra, Pi 4/5)
 - `zftop-freebsd-amd64`: FreeBSD amd64 (built on FreeBSD 15, dynamically links against system libc)
 
 Download the one for your platform, then:
@@ -132,9 +132,10 @@ That's the whole interface in v0.1.
 
 - **Linux** with OpenZFS installed. The kernel module must be loaded so that `/proc/spl/kstat/zfs/arcstats` exists. Distro-agnostic; works on Arch, Debian, Ubuntu, NixOS, anything that ships OpenZFS.
 - **or FreeBSD 14+** with OpenZFS. Works out of the box on vanilla FreeBSD, TrueNAS Core/SCALE, FreeNAS, pfSense, OPNsense, and anything else built on a recent FreeBSD base. ZFS data comes from the `kstat.zfs.misc.arcstats.*` sysctls.
+- **Linux glibc 2.31 or newer** for the prebuilt binary. Covers Debian 11+, Ubuntu 20.04+, RHEL/Rocky/Alma 9+, recent Fedora, Arch (rolling), and recent NixOS. Older glibc systems (RHEL 8, Ubuntu 18.04) and musl-libc systems (Alpine, Void musl, Chimera, Adelie) are not supported by the prebuilt binary — use `cargo install zftop` instead, which compiles against your system's libc.
 - A terminal that supports ANSI colors and box-drawing characters, i.e. any terminal made in the last 30 years.
 
-No runtime dependencies beyond the kernel module being loaded. The Linux binaries are static (musl), the FreeBSD binary dynamically links only against the FreeBSD base libc. Both are drop-in installs with no package manager required.
+The Linux binaries are dynamically linked against glibc (2.31 minimum); the FreeBSD binary dynamically links only against the FreeBSD base libc. Both are drop-in installs beyond the OpenZFS kernel module being loaded.
 
 ## Roadmap
 
