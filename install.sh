@@ -128,6 +128,10 @@ if ! zfs_present; then
     echo "  zftop will still install, but it'll exit with an error on launch"
     echo "  until ZFS is available."
     echo ""
+    echo "  zftop v0.2+ also requires libzfs at runtime. On Linux: install"
+    echo "  your distribution's zfsutils-linux (Debian/Ubuntu) / zfs-utils"
+    echo "  (Arch) / zfs (Fedora) package. On FreeBSD 14+: libzfs is in base."
+    echo ""
 
     if [ -n "$FORCE" ]; then
         echo "install.sh: --force set, continuing anyway."

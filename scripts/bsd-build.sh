@@ -41,6 +41,14 @@ if [ -n "${VERSION:-}" ]; then
     sed -i '' "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
 fi
 
+# Run the full test suite first. This is the only place in the CI matrix
+# where a real ZFS kernel module is available, so the live libzfs
+# integration tests (cfg(target_os = "freebsd") #[test] inside
+# src/pools/libzfs.rs) actually execute here and nowhere else. The Linux
+# build containers ship libzfs-dev for linking but don't have the kernel
+# module loaded, so their `cargo test` runs skip the gated tests.
+"$HOME/.cargo/bin/cargo" test --release
+
 # Build. Cargo lives at $HOME/.cargo/bin/cargo because rustup installs
 # per-user (see scripts/setup-bsd-ci.sh).
 "$HOME/.cargo/bin/cargo" build --release

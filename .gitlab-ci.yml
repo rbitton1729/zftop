@@ -33,6 +33,12 @@ build:x86_64:
   image: rust:1-bullseye
   variables:
     TARGET: x86_64-unknown-linux-gnu
+  before_script:
+    # libzfs-dev ships /usr/include/libzfs/libzfs.h and the libzfs.so symlink
+    # that `-lzfs` from build.rs resolves against. Pulls libzfs2linux (the
+    # runtime shared library) as a transitive dep.
+    - apt-get update
+    - apt-get install -y --no-install-recommends libzfs-dev
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ]; then
@@ -61,7 +67,7 @@ build:aarch64:
   before_script:
     # `rust:1-bullseye` is a Debian 11 image with the host (amd64) Rust
     # toolchain pre-installed but no cross toolchain and no aarch64 std.
-    # We need three things:
+    # We need four things:
     #   - gcc-aarch64-linux-gnu       — the cross compiler/linker driver and
     #                                   aarch64-linux-gnu-strip used below.
     #   - libc6-dev-arm64-cross       — aarch64 glibc startup objects
@@ -69,9 +75,21 @@ build:aarch64:
     #                                   Without these, ld fails with
     #                                   "cannot find Scrt1.o" — the cross gcc
     #                                   package alone does NOT pull them in.
+    #   - libzfs-dev:arm64            — aarch64 libzfs + headers. Pulled via
+    #                                   Debian multi-arch (dpkg --add-architecture
+    #                                   arm64 + the arm64 sources.list line)
+    #                                   because the native libzfs-dev package
+    #                                   only supplies amd64 libs, and the
+    #                                   aarch64 linker needs aarch64 libzfs.so
+    #                                   to resolve `-lzfs` from build.rs.
     #   - rustup target add aarch64…  — the aarch64 Rust std library.
+    - dpkg --add-architecture arm64
+    - sed -i 's|^deb |deb [arch=amd64] |' /etc/apt/sources.list
+    - echo "deb [arch=arm64] http://deb.debian.org/debian bullseye main" > /etc/apt/sources.list.d/arm64.list
+    - echo "deb [arch=arm64] http://deb.debian.org/debian bullseye-updates main" >> /etc/apt/sources.list.d/arm64.list
+    - echo "deb [arch=arm64] http://security.debian.org/debian-security bullseye-security main" >> /etc/apt/sources.list.d/arm64.list
     - apt-get update
-    - apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+    - apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross libzfs-dev:arm64
     - rustup target add ${TARGET}
   script:
     - |

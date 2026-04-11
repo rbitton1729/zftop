@@ -6,7 +6,7 @@ pkgdesc="A terminal dashboard for ZFS, in the spirit of htop"
 arch=('x86_64')
 url="https://git.skylantix.com/rbitton/zftop"
 license=('GPL-3.0-or-later')
-depends=('glibc')
+depends=('glibc' 'zfs-utils')
 keywords=('zfs' 'zftop')
 source=("zftop-${pkgver}-linux-amd64::https://git.skylantix.com/api/v4/projects/rbitton%2Fzftop/packages/generic/zftop/${pkgver}/zftop-linux-amd64"
         "LICENSE-${pkgver}::https://git.skylantix.com/rbitton/zftop/-/raw/v${pkgver}/LICENSE")

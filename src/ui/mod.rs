@@ -2,15 +2,19 @@
 //! Tab content rendering is delegated to per-tab modules (v0.2b: only
 //! `arc_view` has real content; Overview and Pools are placeholders).
 
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::app::{App, Tab};
+use crate::app::{App, PoolsView, Tab};
 
 mod arc_view;
+mod overview;
+mod pools_detail;
+mod pools_list;
+mod widgets;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let [title_area, tab_strip_area, content_area, footer_area] = Layout::vertical([
@@ -26,8 +30,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     match app.current_tab {
         Tab::Arc => arc_view::draw(frame, content_area, app),
-        Tab::Overview => draw_placeholder(frame, content_area, "Overview"),
-        Tab::Pools => draw_placeholder(frame, content_area, "Pools"),
+        Tab::Overview => overview::draw(frame, content_area, app),
+        Tab::Pools => match app.pools_view {
+            PoolsView::List { .. } => pools_list::draw(frame, content_area, app),
+            PoolsView::Detail { .. } => pools_detail::draw(frame, content_area, app),
+        },
     }
 
     draw_footer(frame, footer_area, app);
@@ -82,37 +89,40 @@ fn draw_tab_strip(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(paragraph, area);
 }
 
-fn draw_placeholder(frame: &mut Frame, area: Rect, label: &'static str) {
-    let block = Block::default().borders(Borders::ALL).title(label);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    let text = Paragraph::new(Line::from(vec![
-        Span::styled(label, Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" — coming in v0.2c"),
-    ]))
-    .alignment(Alignment::Center);
-    if inner.height >= 1 {
-        // Centre vertically: pick the middle row.
-        let mid_row = Rect {
-            x: inner.x,
-            y: inner.y + inner.height / 2,
-            width: inner.width,
-            height: 1,
-        };
-        frame.render_widget(text, mid_row);
-    }
-}
-
-fn draw_footer(frame: &mut Frame, area: Rect, _app: &App) {
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("q", Style::default().fg(Color::Yellow)),
-        Span::raw(": quit  "),
-        Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
-        Span::raw(": tabs  "),
-        Span::styled("r", Style::default().fg(Color::Yellow)),
-        Span::raw(": refresh"),
-    ]));
-    frame.render_widget(footer, area);
+fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
+    let hint: Line = match (app.current_tab, app.pools_view) {
+        (Tab::Pools, PoolsView::List { .. }) => Line::from(vec![
+            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::raw(": quit  "),
+            Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
+            Span::raw(": tabs  "),
+            Span::styled("↑↓", Style::default().fg(Color::Yellow)),
+            Span::raw(": select  "),
+            Span::styled("enter", Style::default().fg(Color::Yellow)),
+            Span::raw(": details  "),
+            Span::styled("r", Style::default().fg(Color::Yellow)),
+            Span::raw(": refresh"),
+        ]),
+        (Tab::Pools, PoolsView::Detail { .. }) => Line::from(vec![
+            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::raw(": quit  "),
+            Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
+            Span::raw(": tabs  "),
+            Span::styled("esc", Style::default().fg(Color::Yellow)),
+            Span::raw(": back  "),
+            Span::styled("r", Style::default().fg(Color::Yellow)),
+            Span::raw(": refresh"),
+        ]),
+        _ => Line::from(vec![
+            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::raw(": quit  "),
+            Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
+            Span::raw(": tabs  "),
+            Span::styled("r", Style::default().fg(Color::Yellow)),
+            Span::raw(": refresh"),
+        ]),
+    };
+    frame.render_widget(Paragraph::new(hint), area);
 }
 
 #[cfg(test)]
@@ -135,7 +145,7 @@ mod tests {
         let mem: Option<Box<dyn MemSource>> = Some(Box::new(
             meminfo::linux::LinuxMemSource::new(meminfo_path),
         ));
-        let mut app = App::new(arc_reader, mem).expect("fixture App::new");
+        let mut app = App::new(arc_reader, mem, None, None).expect("fixture App::new");
         app.current_tab = tab;
         app
     }
@@ -195,13 +205,48 @@ mod tests {
     }
 
     #[test]
-    fn footer_shows_global_hints() {
+    fn footer_on_overview_shows_global_hints() {
+        let app = app_from_fixtures_on_tab(Tab::Overview);
+        let terminal = draw_and_collect(&app, 80, 24);
+        let last = row_text(terminal.backend(), 23);
+        assert!(last.contains("q"));
+        assert!(last.contains("1/2/3"));
+        assert!(last.contains("r"));
+        // Overview shouldn't show pool-nav keys.
+        assert!(!last.contains("enter"));
+        assert!(!last.contains("esc"));
+    }
+
+    #[test]
+    fn footer_on_arc_shows_global_hints() {
         let app = app_from_fixtures_on_tab(Tab::Arc);
         let terminal = draw_and_collect(&app, 80, 24);
         let last = row_text(terminal.backend(), 23);
-        assert!(last.contains("q"), "footer = {last:?}");
-        assert!(last.contains("1/2/3"), "footer = {last:?}");
-        assert!(last.contains("r"), "footer = {last:?}");
+        assert!(last.contains("q"));
+        assert!(last.contains("1/2/3"));
+        assert!(last.contains("r"));
+        assert!(!last.contains("enter"));
+    }
+
+    #[test]
+    fn footer_on_pools_list_shows_selection_keys() {
+        let app = app_from_fixtures_on_tab(Tab::Pools);
+        let terminal = draw_and_collect(&app, 80, 24);
+        let last = row_text(terminal.backend(), 23);
+        assert!(last.contains("select"), "footer = {last:?}");
+        assert!(last.contains("enter"), "footer = {last:?}");
+        assert!(last.contains("details"), "footer = {last:?}");
+    }
+
+    #[test]
+    fn footer_on_pools_detail_shows_esc_back() {
+        use crate::app::PoolsView;
+        let mut app = app_from_fixtures_on_tab(Tab::Pools);
+        app.pools_view = PoolsView::Detail { pool_index: 0 };
+        let terminal = draw_and_collect(&app, 80, 24);
+        let last = row_text(terminal.backend(), 23);
+        assert!(last.contains("esc"), "footer = {last:?}");
+        assert!(last.contains("back"), "footer = {last:?}");
     }
 
     #[test]
@@ -215,20 +260,30 @@ mod tests {
     }
 
     #[test]
-    fn overview_tab_shows_placeholder() {
+    fn overview_tab_renders_real_content() {
         let app = app_from_fixtures_on_tab(Tab::Overview);
         let terminal = draw_and_collect(&app, 80, 24);
         let whole = whole_text(terminal.backend());
-        assert!(whole.contains("Overview"), "missing Overview label");
-        assert!(whole.contains("coming in v0.2c"), "missing placeholder text");
+        // Overview now shows 3 sections: System RAM, ARC gauge, Pools.
+        // Without libzfs+fixture pools wired in here, the Pools section
+        // shows either "(no pools imported)" or "libzfs unavailable".
+        assert!(whole.contains("System RAM"), "missing System RAM block");
+        assert!(whole.contains("Pools"), "missing Pools block");
+        // The ARC gauge itself has "ARC" in its title.
+        assert!(whole.contains("ARC"), "missing ARC label");
     }
 
     #[test]
-    fn pools_tab_shows_placeholder() {
+    fn pools_tab_renders_real_content() {
         let app = app_from_fixtures_on_tab(Tab::Pools);
         let terminal = draw_and_collect(&app, 80, 24);
         let whole = whole_text(terminal.backend());
-        assert!(whole.contains("Pools"), "missing Pools label");
-        assert!(whole.contains("coming in v0.2c"), "missing placeholder text");
+        // Without a real PoolsSource, this fixture app lands on the
+        // empty-snapshot path which shows "(no pools imported)".
+        assert!(whole.contains("Pools"), "missing Pools block title");
+        assert!(
+            whole.contains("no pools imported"),
+            "expected empty-state notice, got: {whole:?}"
+        );
     }
 }

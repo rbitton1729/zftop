@@ -1,6 +1,7 @@
 mod app;
 mod arcstats;
 mod meminfo;
+mod pools;
 mod ui;
 
 use std::io;
@@ -17,14 +18,16 @@ use ratatui::Terminal;
 use app::App;
 use arcstats::ArcStats;
 use meminfo::MemSource;
+use pools::PoolsSource;
 
 const DEFAULT_SOURCE: &str = "/proc/spl/kstat/zfs/arcstats";
 
 fn main() -> Result<()> {
     let (source, meminfo_source, interval) = parse_args();
-    let (arc_reader, mem_source) = build_sources(source.clone(), meminfo_source);
+    let (arc_reader, mem_source, pools_source, pools_init_error) =
+        build_sources(source.clone(), meminfo_source);
 
-    let mut app = match App::new(arc_reader, mem_source) {
+    let mut app = match App::new(arc_reader, mem_source, pools_source, pools_init_error) {
         Ok(app) => app,
         Err(e) if is_default_source(&source) => {
             eprintln!("zftop: ZFS is not found on this system");
@@ -53,30 +56,26 @@ fn main() -> Result<()> {
     result
 }
 
-#[cfg(target_os = "linux")]
-fn build_sources(
-    source: PathBuf,
-    meminfo_source: Option<PathBuf>,
-) -> (
+type BuildSourcesResult = (
     Box<dyn FnMut() -> Result<ArcStats>>,
     Option<Box<dyn MemSource>>,
-) {
+    Option<Box<dyn PoolsSource>>,
+    Option<String>,
+);
+
+#[cfg(target_os = "linux")]
+fn build_sources(source: PathBuf, meminfo_source: Option<PathBuf>) -> BuildSourcesResult {
     let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
         Box::new(move || arcstats::linux::from_procfs_path(&source));
     let meminfo_path = meminfo_source.unwrap_or_else(|| PathBuf::from("/proc/meminfo"));
     let mem: Option<Box<dyn MemSource>> =
         Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
-    (arc_reader, mem)
+    let (pools, pools_init_error) = build_pools_source();
+    (arc_reader, mem, pools, pools_init_error)
 }
 
 #[cfg(target_os = "freebsd")]
-fn build_sources(
-    source: PathBuf,
-    meminfo_source: Option<PathBuf>,
-) -> (
-    Box<dyn FnMut() -> Result<ArcStats>>,
-    Option<Box<dyn MemSource>>,
-) {
+fn build_sources(source: PathBuf, meminfo_source: Option<PathBuf>) -> BuildSourcesResult {
     if source != PathBuf::from(DEFAULT_SOURCE) || meminfo_source.is_some() {
         eprintln!("zftop: --source/--meminfo are Linux-only and ignored on FreeBSD");
     }
@@ -85,20 +84,27 @@ fn build_sources(
     let mem: Option<Box<dyn MemSource>> = meminfo::freebsd::FreeBsdMemSource::new()
         .ok()
         .map(|s| Box::new(s) as Box<dyn MemSource>);
-    (arc_reader, mem)
+    let (pools, pools_init_error) = build_pools_source();
+    (arc_reader, mem, pools, pools_init_error)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-fn build_sources(
-    _source: PathBuf,
-    _meminfo_source: Option<PathBuf>,
-) -> (
-    Box<dyn FnMut() -> Result<ArcStats>>,
-    Option<Box<dyn MemSource>>,
-) {
+fn build_sources(_source: PathBuf, _meminfo_source: Option<PathBuf>) -> BuildSourcesResult {
     let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
         Box::new(|| Err(anyhow::anyhow!("zftop only supports Linux and FreeBSD")));
-    (arc_reader, None)
+    (arc_reader, None, None, None)
+}
+
+/// Attempt to construct a `LibzfsPoolsSource`. On failure (`libzfs_init`
+/// returns null — typically "/dev/zfs not accessible"), returns
+/// `(None, Some(error))` so `App` can render the "libzfs unavailable"
+/// fallback without crashing.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn build_pools_source() -> (Option<Box<dyn PoolsSource>>, Option<String>) {
+    match pools::libzfs::LibzfsPoolsSource::new() {
+        Ok(src) => (Some(Box::new(src) as Box<dyn PoolsSource>), None),
+        Err(e) => (None, Some(e.to_string())),
+    }
 }
 
 fn is_default_source(source: &Path) -> bool {
@@ -148,7 +154,15 @@ fn print_help() {
     println!();
     println!("CONTROLS:");
     println!("    q, Ctrl+C               Quit");
-    println!("    r                        Force refresh");
+    println!("    r                       Force refresh");
+    println!("    1, 2, 3                 Switch tab (Overview / Pools / ARC)");
+    println!("    Tab, Shift+Tab          Cycle tabs forward / back");
+    println!("    (Pools list)");
+    println!("        ↑/↓, j/k            Select pool");
+    println!("        Home, End           Jump to first / last");
+    println!("        Enter               Drill into pool detail");
+    println!("    (Pools detail)");
+    println!("        Esc, Backspace      Return to list");
     println!();
     println!("On FreeBSD, --source and --meminfo are ignored; data is read via sysctl.");
     println!();

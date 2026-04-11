@@ -6,6 +6,7 @@ use ratatui::style::Color;
 
 use crate::arcstats::ArcStats;
 use crate::meminfo::{MemSnapshot, MemSource, RamSegment};
+use crate::pools::{PoolInfo, PoolsSource};
 
 /// Top-level navigation tab. v0.2b ships all three variants but only the ARC
 /// tab has real content; Overview and Pools render placeholders until v0.2c.
@@ -14,6 +15,14 @@ pub enum Tab {
     Overview,
     Arc,
     Pools,
+}
+
+/// State of the Pools tab: either the list view with a selected row, or the
+/// detail view drilldown for a specific pool by index into the snapshot.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PoolsView {
+    List { selected: usize },
+    Detail { pool_index: usize },
 }
 
 impl Tab {
@@ -75,11 +84,25 @@ pub struct App {
     pub mem_source: Option<Box<dyn MemSource>>,
     pub mem_snapshot: Option<MemSnapshot>,
     pub should_quit: bool,
-    /// Currently-selected top-level tab. Defaults to `Tab::Overview` — the
-    /// Overview tab is a placeholder in v0.2b but is the intended landing
-    /// surface from v0.2c onward, so launching there now means no default
-    /// flip later.
+    /// Currently-selected top-level tab. Defaults to `Tab::Overview`.
     pub current_tab: Tab,
+    /// Current pool data source. `None` when libzfs initialization failed at
+    /// startup (captured error lives in `pools_init_error`).
+    pools_source: Option<Box<dyn PoolsSource>>,
+    /// Latest successful snapshot from the pools source. Empty on a freshly
+    /// started app until the first refresh, or on hosts where `pools_source`
+    /// is `None`.
+    pub pools_snapshot: Vec<PoolInfo>,
+    /// Error from the most recent `refresh()` call, or `None` if the last
+    /// refresh succeeded. Stale snapshots are preserved — the UI still shows
+    /// the last good snapshot when this is `Some`.
+    pub pools_refresh_error: Option<String>,
+    /// Error from `LibzfsPoolsSource::new()`. Set once at startup and never
+    /// cleared. `None` when libzfs initialized cleanly (even on hosts with
+    /// zero imported pools — that's an empty `pools_snapshot`, not an error).
+    pub pools_init_error: Option<String>,
+    /// Pools tab view state (list with selected row / detail drilldown).
+    pub pools_view: PoolsView,
 }
 
 pub struct BreakdownRow {
@@ -92,11 +115,13 @@ impl App {
     pub fn new(
         mut arc_reader: Box<dyn FnMut() -> Result<ArcStats>>,
         mut mem_source: Option<Box<dyn MemSource>>,
+        pools_source: Option<Box<dyn PoolsSource>>,
+        pools_init_error: Option<String>,
     ) -> Result<Self> {
         let current = arc_reader()?;
         let arc_segs = arc_segments(&current);
         let mem_snapshot = mem_source.as_mut().and_then(|s| s.snapshot(&arc_segs));
-        Ok(Self {
+        let mut app = Self {
             current,
             previous: None,
             arc_reader,
@@ -104,7 +129,57 @@ impl App {
             mem_snapshot,
             should_quit: false,
             current_tab: Tab::Overview,
-        })
+            pools_source,
+            pools_snapshot: Vec::new(),
+            pools_refresh_error: None,
+            pools_init_error,
+            pools_view: PoolsView::List { selected: 0 },
+        };
+        // Tick the pools source once so the first render has data.
+        app.refresh_pools();
+        Ok(app)
+    }
+
+    /// Tick the pools source, populate `pools_snapshot` on success, preserve
+    /// the stale snapshot on transient errors. No-op when `pools_source` is
+    /// `None` (libzfs init failed at startup).
+    fn refresh_pools(&mut self) {
+        let Some(ps) = self.pools_source.as_mut() else {
+            return;
+        };
+        match ps.refresh() {
+            Ok(()) => {
+                self.pools_snapshot = ps.pools();
+                self.pools_refresh_error = None;
+                self.clamp_pools_selection();
+            }
+            Err(e) => {
+                self.pools_refresh_error = Some(e.to_string());
+                // Keep stale snapshot — better than blanking on a transient.
+            }
+        }
+    }
+
+    /// Keep `pools_view` valid when the snapshot shape shifts under it.
+    /// - List selection is clamped to `len - 1`.
+    /// - Detail with an index past the new `len` falls back to List.
+    fn clamp_pools_selection(&mut self) {
+        match &mut self.pools_view {
+            PoolsView::List { selected } => {
+                if self.pools_snapshot.is_empty() {
+                    *selected = 0;
+                } else if *selected >= self.pools_snapshot.len() {
+                    *selected = self.pools_snapshot.len() - 1;
+                }
+            }
+            PoolsView::Detail { pool_index } => {
+                if *pool_index >= self.pools_snapshot.len() {
+                    self.pools_view = PoolsView::List {
+                        selected: self.pools_snapshot.len().saturating_sub(1),
+                    };
+                }
+            }
+        }
     }
 
     /// Move `current_tab` by `delta` positions through `Tab::ALL`, wrapping
@@ -130,7 +205,27 @@ impl App {
         }
         let arc_segs = arc_segments(&self.current);
         self.mem_snapshot = self.mem_source.as_ref().and_then(|s| s.snapshot(&arc_segs));
+        self.refresh_pools();
         Ok(())
+    }
+
+    /// Count pools whose health is anything other than Online. Used by the
+    /// Overview alarm summary to highlight "something is wrong" at a glance.
+    pub fn pools_degraded_count(&self) -> usize {
+        self.pools_snapshot
+            .iter()
+            .filter(|p| p.health != crate::pools::PoolHealth::Online)
+            .count()
+    }
+
+    /// Sum of `size_bytes` across every pool in the snapshot.
+    pub fn pools_total_capacity(&self) -> u64 {
+        self.pools_snapshot.iter().map(|p| p.size_bytes).sum()
+    }
+
+    /// Sum of `allocated_bytes` across every pool in the snapshot.
+    pub fn pools_total_allocated(&self) -> u64 {
+        self.pools_snapshot.iter().map(|p| p.allocated_bytes).sum()
     }
 
     pub fn on_key(&mut self, key: KeyEvent) {
@@ -171,8 +266,50 @@ impl App {
             _ => {}
         }
 
-        // Per-tab bindings — plan v0.2c will dispatch pools-list selection,
-        // drilldown, escape-to-list, etc. here. Nothing to dispatch yet.
+        // Per-tab bindings.
+        if self.current_tab == Tab::Pools {
+            self.on_key_pools(key);
+        }
+    }
+
+    fn on_key_pools(&mut self, key: KeyEvent) {
+        match (self.pools_view, key.code) {
+            // List navigation
+            (PoolsView::List { .. }, KeyCode::Down | KeyCode::Char('j')) => {
+                if let PoolsView::List { selected } = &mut self.pools_view {
+                    if *selected + 1 < self.pools_snapshot.len() {
+                        *selected += 1;
+                    }
+                }
+            }
+            (PoolsView::List { .. }, KeyCode::Up | KeyCode::Char('k')) => {
+                if let PoolsView::List { selected } = &mut self.pools_view {
+                    if *selected > 0 {
+                        *selected -= 1;
+                    }
+                }
+            }
+            (PoolsView::List { .. }, KeyCode::Home) => {
+                if let PoolsView::List { selected } = &mut self.pools_view {
+                    *selected = 0;
+                }
+            }
+            (PoolsView::List { .. }, KeyCode::End) => {
+                if let PoolsView::List { selected } = &mut self.pools_view {
+                    *selected = self.pools_snapshot.len().saturating_sub(1);
+                }
+            }
+            (PoolsView::List { selected }, KeyCode::Enter) => {
+                if !self.pools_snapshot.is_empty() {
+                    self.pools_view = PoolsView::Detail { pool_index: selected };
+                }
+            }
+            // Detail → back to list
+            (PoolsView::Detail { pool_index }, KeyCode::Esc | KeyCode::Backspace) => {
+                self.pools_view = PoolsView::List { selected: pool_index };
+            }
+            _ => {}
+        }
     }
 
     pub fn hit_ratio_overall(&self) -> f64 {
@@ -352,6 +489,11 @@ mod tests {
             mem_snapshot: None,
             should_quit: false,
             current_tab: Tab::Overview,
+            pools_source: None,
+            pools_snapshot: Vec::new(),
+            pools_refresh_error: None,
+            pools_init_error: None,
+            pools_view: PoolsView::List { selected: 0 },
         }
     }
 
@@ -542,6 +684,215 @@ mod tests {
         assert!(app.should_quit);
     }
 
+    use crate::pools::fake::FakePoolsSource;
+    use crate::pools::{
+        ErrorCounts as PoolErrors, PoolHealth, PoolInfo, ScrubState, VdevKind, VdevNode,
+        VdevState,
+    };
+
+    fn test_pool(name: &str, health: PoolHealth, size: u64, alloc: u64) -> PoolInfo {
+        PoolInfo {
+            name: name.into(),
+            health,
+            allocated_bytes: alloc,
+            size_bytes: size,
+            free_bytes: size.saturating_sub(alloc),
+            fragmentation_pct: Some(10),
+            scrub: ScrubState::Never,
+            errors: PoolErrors::default(),
+            root_vdev: VdevNode {
+                name: name.into(),
+                kind: VdevKind::Root,
+                state: VdevState::Online,
+                size_bytes: Some(size),
+                errors: PoolErrors::default(),
+                children: vec![],
+            },
+        }
+    }
+
+    fn app_with_pools(pools: Vec<PoolInfo>) -> App {
+        let mut app = app_with(sample_stats(), None);
+        app.pools_source = Some(Box::new(FakePoolsSource::new(pools.clone())));
+        app.pools_snapshot = pools;
+        app
+    }
+
+    #[test]
+    fn refresh_pools_populates_snapshot_from_source() {
+        let pools = vec![test_pool("tank", PoolHealth::Online, 1_000, 500)];
+        let mut app = app_with(sample_stats(), None);
+        app.pools_source = Some(Box::new(FakePoolsSource::new(pools.clone())));
+        app.refresh_pools();
+        assert_eq!(app.pools_snapshot.len(), 1);
+        assert_eq!(app.pools_snapshot[0].name, "tank");
+        assert!(app.pools_refresh_error.is_none());
+    }
+
+    #[test]
+    fn refresh_pools_error_preserves_stale_snapshot() {
+        let initial = vec![test_pool("tank", PoolHealth::Online, 1_000, 500)];
+        let mut app = app_with_pools(initial);
+        // Swap the source for one that errors on the next refresh.
+        app.pools_source = Some(Box::new(
+            FakePoolsSource::new(vec![]).fail_next_refresh("transient libzfs fail"),
+        ));
+        app.refresh_pools();
+        assert!(app.pools_refresh_error.is_some());
+        assert_eq!(app.pools_snapshot.len(), 1, "snapshot should be preserved");
+    }
+
+    #[test]
+    fn pools_degraded_count_sums_non_online() {
+        let app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Degraded, 100, 50),
+            test_pool("c", PoolHealth::Faulted, 100, 50),
+        ]);
+        assert_eq!(app.pools_degraded_count(), 2);
+    }
+
+    #[test]
+    fn pools_totals_sum_correctly() {
+        let app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 1000, 400),
+            test_pool("b", PoolHealth::Online, 2000, 800),
+        ]);
+        assert_eq!(app.pools_total_capacity(), 3000);
+        assert_eq!(app.pools_total_allocated(), 1200);
+    }
+
+    #[test]
+    fn selection_clamps_when_pools_shrink() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+            test_pool("c", PoolHealth::Online, 100, 50),
+        ]);
+        app.pools_view = PoolsView::List { selected: 2 };
+        // Shrink the underlying source to one pool and refresh.
+        app.pools_source = Some(Box::new(FakePoolsSource::new(vec![test_pool(
+            "a",
+            PoolHealth::Online,
+            100,
+            50,
+        )])));
+        app.refresh_pools();
+        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+    }
+
+    #[test]
+    fn pools_down_advances_selection() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+            test_pool("c", PoolHealth::Online, 100, 50),
+        ]);
+        app.current_tab = Tab::Pools;
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.pools_view, PoolsView::List { selected: 1 });
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.pools_view, PoolsView::List { selected: 2 });
+    }
+
+    #[test]
+    fn pools_down_clamps_at_last() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+        ]);
+        app.current_tab = Tab::Pools;
+        app.pools_view = PoolsView::List { selected: 1 };
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.pools_view, PoolsView::List { selected: 1 });
+    }
+
+    #[test]
+    fn pools_up_at_first_is_noop() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+        ]);
+        app.current_tab = Tab::Pools;
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+    }
+
+    #[test]
+    fn pools_home_end_jump() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+            test_pool("c", PoolHealth::Online, 100, 50),
+        ]);
+        app.current_tab = Tab::Pools;
+        app.on_key(key(KeyCode::End));
+        assert_eq!(app.pools_view, PoolsView::List { selected: 2 });
+        app.on_key(key(KeyCode::Home));
+        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+    }
+
+    #[test]
+    fn pools_enter_drills_into_detail() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+        ]);
+        app.current_tab = Tab::Pools;
+        app.pools_view = PoolsView::List { selected: 1 };
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.pools_view, PoolsView::Detail { pool_index: 1 });
+    }
+
+    #[test]
+    fn pools_enter_with_empty_list_is_noop() {
+        let mut app = app_with_pools(vec![]);
+        app.current_tab = Tab::Pools;
+        app.on_key(key(KeyCode::Enter));
+        assert!(matches!(app.pools_view, PoolsView::List { .. }));
+    }
+
+    #[test]
+    fn pools_esc_returns_to_list_with_same_index() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+        ]);
+        app.current_tab = Tab::Pools;
+        app.pools_view = PoolsView::Detail { pool_index: 1 };
+        app.on_key(key(KeyCode::Esc));
+        assert_eq!(app.pools_view, PoolsView::List { selected: 1 });
+    }
+
+    #[test]
+    fn pools_keys_ignored_when_not_on_pools_tab() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+        ]);
+        app.current_tab = Tab::Overview;
+        app.on_key(key(KeyCode::Down));
+        // Selection unchanged because we're not on the Pools tab.
+        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+    }
+
+    #[test]
+    fn detail_view_drops_to_list_when_pool_vanishes() {
+        let mut app = app_with_pools(vec![
+            test_pool("a", PoolHealth::Online, 100, 50),
+            test_pool("b", PoolHealth::Online, 100, 50),
+        ]);
+        app.pools_view = PoolsView::Detail { pool_index: 1 };
+        app.pools_source = Some(Box::new(FakePoolsSource::new(vec![test_pool(
+            "a",
+            PoolHealth::Online,
+            100,
+            50,
+        )])));
+        app.refresh_pools();
+        assert!(matches!(app.pools_view, PoolsView::List { selected: 0 }));
+    }
+
     #[test]
     fn app_passes_two_arc_segments_size_and_overhead() {
         // The RAM bar should get TWO adjacent ARC sub-segments: primary `size`
@@ -556,7 +907,7 @@ mod tests {
             Box::new(move || Ok(sample_stats()));
         let mem_source: Option<Box<dyn MemSource>> = Some(Box::new(EchoMemSource));
 
-        let app = App::new(arc_reader, mem_source).expect("App::new should succeed");
+        let app = App::new(arc_reader, mem_source, None, None).expect("App::new should succeed");
         let snap = app.mem_snapshot.expect("snapshot should be present");
 
         assert_eq!(
