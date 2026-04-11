@@ -1,4 +1,6 @@
-// Ratatui rendering: bars, tables, layout.
+//! v0.1 ARC dashboard: RAM bar, ARC gauge, breakdown table, hit ratios,
+//! compression, throughput. Owned layout-and-widgets; the parent `ui::draw`
+//! hands this function a `Rect` and gets a rendered ARC screen back.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -8,20 +10,19 @@ use ratatui::Frame;
 
 use crate::app::{format_bytes, App};
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let has_meminfo = app.mem_snapshot.is_some();
 
     // Top section: title + bars (full width)
     // Middle section: panels side by side
-    // Bottom: footer
+    // Footer is owned by the parent `ui::draw`, not drawn here.
     let top_height = if has_meminfo { 7 } else { 4 }; // title + ram + gauge vs title + gauge
 
-    let [top_area, middle_area, footer_area] = Layout::vertical([
+    let [top_area, middle_area] = Layout::vertical([
         Constraint::Length(top_height),
         Constraint::Min(10),
-        Constraint::Length(1),
     ])
-    .areas(frame.area());
+    .areas(area);
 
     // -- Top: title + bars --
     if has_meminfo {
@@ -74,15 +75,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
         draw_hit_ratios(frame, ratios_area, app);
         draw_throughput(frame, throughput_area, app);
     }
-
-    // -- Footer --
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("q", Style::default().fg(Color::Yellow)),
-        Span::raw(": quit  "),
-        Span::styled("r", Style::default().fg(Color::Yellow)),
-        Span::raw(": refresh"),
-    ]));
-    frame.render_widget(footer, footer_area);
 }
 
 fn draw_title(frame: &mut Frame, area: Rect) {
@@ -337,5 +329,70 @@ fn format_count(n: u64) -> String {
         format!("{:.1}K", n as f64 / 1_000.0)
     } else {
         n.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::arcstats;
+    use crate::meminfo::{self, MemSource};
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
+    use ratatui::Terminal;
+    use std::path::PathBuf;
+
+    /// Serialize a rendered buffer to a newline-joined string of glyphs.
+    /// One line per row, padded to the buffer width with spaces. No ANSI
+    /// codes — styles are asserted separately when needed.
+    fn buffer_to_string(buffer: &Buffer) -> String {
+        let width = buffer.area.width as usize;
+        let height = buffer.area.height as usize;
+        let mut out = String::with_capacity((width + 1) * height);
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buffer[(x as u16, y as u16)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Build an `App` populated from the checked-in Linux fixtures. Used by
+    /// the golden test so the rendered output is deterministic and portable
+    /// across dev hosts.
+    fn app_from_fixtures() -> App {
+        let arcstats_path = PathBuf::from("fixtures/arcstats");
+        let meminfo_path = PathBuf::from("fixtures/meminfo");
+
+        let arc_reader: Box<dyn FnMut() -> anyhow::Result<arcstats::ArcStats>> = {
+            let p = arcstats_path.clone();
+            Box::new(move || arcstats::linux::from_procfs_path(&p))
+        };
+        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
+            meminfo::linux::LinuxMemSource::new(meminfo_path),
+        ));
+        App::new(arc_reader, mem).expect("fixture App::new")
+    }
+
+    #[test]
+    fn arc_view_content_matches_v0_1_golden() {
+        let app = app_from_fixtures();
+        let backend = TestBackend::new(80, 22);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                draw(frame, area, &app);
+            })
+            .expect("draw");
+        let rendered = buffer_to_string(terminal.backend().buffer());
+        let golden = include_str!("../../fixtures/golden/arc_view_content_v0_1.txt");
+        if rendered != golden {
+            eprintln!("--- rendered ---\n{rendered}");
+            eprintln!("--- golden ---\n{golden}");
+            panic!("ARC content render does not match golden; diff above");
+        }
     }
 }
