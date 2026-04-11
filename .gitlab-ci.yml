@@ -35,7 +35,10 @@ test:
     # never touch libzfs — the binary contains extern "C" refs that the
     # linker has to bind.
     - apt-get update
-    - apt-get install -y --no-install-recommends libzfs-dev
+    # Diagnostic: list every libzfs* / libnvpair* / zfs* package available
+    # in bullseye contrib so we can confirm the right -dev package name.
+    - apt-cache search --names-only '^libzfs|^libnvpair|^zfsutils' || true
+    - apt-get install -y --no-install-recommends libzfslinux-dev
     - curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/bin
   script:
     - cargo nextest run --profile ci
@@ -54,11 +57,14 @@ build:x86_64:
     - echo "deb http://deb.debian.org/debian bullseye main contrib" > /etc/apt/sources.list
     - echo "deb http://deb.debian.org/debian bullseye-updates main contrib" >> /etc/apt/sources.list
     - echo "deb http://security.debian.org/debian-security bullseye-security main contrib" >> /etc/apt/sources.list
-    # libzfs-dev ships /usr/include/libzfs/libzfs.h and the libzfs.so symlink
-    # that `-lzfs` from build.rs resolves against. Pulls libzfs2linux (the
-    # runtime shared library) as a transitive dep.
+    # libzfslinux-dev ships /usr/include/libzfs/libzfs.h and the libzfs.so
+    # symlink that `-lzfs` from build.rs resolves against. Pulls
+    # libzfs2linux (the runtime shared library) as a transitive dep.
+    # Note: the package is libzfslinux-dev on Debian bullseye (OpenZFS 2.0.x
+    # source packaging), NOT libzfs-dev — that name is bookworm-only.
     - apt-get update
-    - apt-get install -y --no-install-recommends libzfs-dev
+    - apt-cache search --names-only '^libzfs|^libnvpair|^zfsutils' || true
+    - apt-get install -y --no-install-recommends libzfslinux-dev
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ]; then
@@ -115,7 +121,8 @@ build:aarch64:
     - echo "deb [arch=arm64] http://deb.debian.org/debian bullseye-updates main contrib" >> /etc/apt/sources.list.d/arm64.list
     - echo "deb [arch=arm64] http://security.debian.org/debian-security bullseye-security main contrib" >> /etc/apt/sources.list.d/arm64.list
     - apt-get update
-    - apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross libzfs-dev:arm64
+    - apt-cache search --names-only '^libzfs|^libnvpair|^zfsutils' || true
+    - apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross libzfslinux-dev:arm64
     - rustup target add ${TARGET}
   script:
     - |
