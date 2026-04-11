@@ -18,8 +18,24 @@ cache:
 
 test:
   stage: test
-  image: rust:latest
+  # Pinned to the same Debian 11 image the build jobs use so that
+  # (a) libzfs-dev (which lives in Debian contrib because of CDDL) is
+  # reliably available via apt, and (b) tests run against the same glibc
+  # floor the release binaries target.
+  image: rust:1-bullseye
   before_script:
+    # Enable the contrib component — zfs-linux / libzfs-dev live there,
+    # not in main. The rust:1-bullseye image ships with main-only sources.
+    - echo "deb http://deb.debian.org/debian bullseye main contrib" > /etc/apt/sources.list
+    - echo "deb http://deb.debian.org/debian bullseye-updates main contrib" >> /etc/apt/sources.list
+    - echo "deb http://security.debian.org/debian-security bullseye-security main contrib" >> /etc/apt/sources.list
+    # libzfs-dev supplies the headers + libzfs.so / libnvpair.so that
+    # build.rs asks the linker to resolve via -lzfs and -lnvpair. Without
+    # this, cargo test fails at link time even though the tests themselves
+    # never touch libzfs — the binary contains extern "C" refs that the
+    # linker has to bind.
+    - apt-get update
+    - apt-get install -y --no-install-recommends libzfs-dev
     - curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/bin
   script:
     - cargo nextest run --profile ci
@@ -34,6 +50,10 @@ build:x86_64:
   variables:
     TARGET: x86_64-unknown-linux-gnu
   before_script:
+    # Enable Debian contrib — zfs-linux / libzfs-dev live there due to CDDL.
+    - echo "deb http://deb.debian.org/debian bullseye main contrib" > /etc/apt/sources.list
+    - echo "deb http://deb.debian.org/debian bullseye-updates main contrib" >> /etc/apt/sources.list
+    - echo "deb http://security.debian.org/debian-security bullseye-security main contrib" >> /etc/apt/sources.list
     # libzfs-dev ships /usr/include/libzfs/libzfs.h and the libzfs.so symlink
     # that `-lzfs` from build.rs resolves against. Pulls libzfs2linux (the
     # runtime shared library) as a transitive dep.
@@ -83,11 +103,17 @@ build:aarch64:
     #                                   aarch64 linker needs aarch64 libzfs.so
     #                                   to resolve `-lzfs` from build.rs.
     #   - rustup target add aarch64…  — the aarch64 Rust std library.
+    # Enable Debian contrib (libzfs-dev lives there) + arm64 multi-arch.
+    # We rewrite the main sources.list to include contrib AND pin each
+    # existing line to arch=amd64, then add a parallel arm64 source.list
+    # for the cross-compile libzfs.
+    - echo "deb [arch=amd64] http://deb.debian.org/debian bullseye main contrib" > /etc/apt/sources.list
+    - echo "deb [arch=amd64] http://deb.debian.org/debian bullseye-updates main contrib" >> /etc/apt/sources.list
+    - echo "deb [arch=amd64] http://security.debian.org/debian-security bullseye-security main contrib" >> /etc/apt/sources.list
     - dpkg --add-architecture arm64
-    - sed -i 's|^deb |deb [arch=amd64] |' /etc/apt/sources.list
-    - echo "deb [arch=arm64] http://deb.debian.org/debian bullseye main" > /etc/apt/sources.list.d/arm64.list
-    - echo "deb [arch=arm64] http://deb.debian.org/debian bullseye-updates main" >> /etc/apt/sources.list.d/arm64.list
-    - echo "deb [arch=arm64] http://security.debian.org/debian-security bullseye-security main" >> /etc/apt/sources.list.d/arm64.list
+    - echo "deb [arch=arm64] http://deb.debian.org/debian bullseye main contrib" > /etc/apt/sources.list.d/arm64.list
+    - echo "deb [arch=arm64] http://deb.debian.org/debian bullseye-updates main contrib" >> /etc/apt/sources.list.d/arm64.list
+    - echo "deb [arch=arm64] http://security.debian.org/debian-security bullseye-security main contrib" >> /etc/apt/sources.list.d/arm64.list
     - apt-get update
     - apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross libzfs-dev:arm64
     - rustup target add ${TARGET}
