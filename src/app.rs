@@ -30,11 +30,8 @@ impl Tab {
         }
     }
 
-    /// Hotkey character bound to this tab. v0.2b wires the bindings directly
-    /// in `App::on_key` rather than looking them up via this method, so the
-    /// only caller is `tab_hotkeys_are_1_2_3_in_order`. Plan v0.2c will use
-    /// this to build per-tab footer hints.
-    #[allow(dead_code)]
+    /// Hotkey character bound to this tab. Used by the tab strip renderer
+    /// to show the key binding next to each tab label.
     pub fn hotkey(&self) -> char {
         match self {
             Tab::Overview => '1',

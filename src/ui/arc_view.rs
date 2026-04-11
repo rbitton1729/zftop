@@ -13,10 +13,11 @@ use crate::app::{format_bytes, App};
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let has_meminfo = app.mem_snapshot.is_some();
 
-    // Top section: title + bars (full width)
-    // Middle section: panels side by side
-    // Footer is owned by the parent `ui::draw`, not drawn here.
-    let top_height = if has_meminfo { 7 } else { 4 }; // title + ram + gauge vs title + gauge
+    // Top section: RAM bar (if meminfo) + ARC gauge.
+    // Middle section: panels side by side.
+    // Title is owned by the parent `ui::draw` as a global header, not drawn
+    // here. Footer is likewise owned by the parent.
+    let top_height = if has_meminfo { 6 } else { 3 }; // ram + gauge vs gauge only
 
     let [top_area, middle_area] = Layout::vertical([
         Constraint::Length(top_height),
@@ -24,25 +25,17 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     ])
     .areas(area);
 
-    // -- Top: title + bars --
+    // -- Top: bars --
     if has_meminfo {
-        let [title_area, ram_area, gauge_area] = Layout::vertical([
-            Constraint::Length(1),
+        let [ram_area, gauge_area] = Layout::vertical([
             Constraint::Length(3),
             Constraint::Length(3),
         ])
         .areas(top_area);
-        draw_title(frame, title_area);
         draw_ram_bar(frame, ram_area, app);
         draw_gauge(frame, gauge_area, app);
     } else {
-        let [title_area, gauge_area] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(3),
-        ])
-        .areas(top_area);
-        draw_title(frame, title_area);
-        draw_gauge(frame, gauge_area, app);
+        draw_gauge(frame, top_area, app);
     }
 
     // -- Middle: panels side by side --
@@ -75,14 +68,6 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         draw_hit_ratios(frame, ratios_area, app);
         draw_throughput(frame, throughput_area, app);
     }
-}
-
-fn draw_title(frame: &mut Frame, area: Rect) {
-    let title = Paragraph::new(Line::from(vec![
-        Span::styled("zftop", Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw(" — ARC"),
-    ]));
-    frame.render_widget(title, area);
 }
 
 fn draw_ram_bar(frame: &mut Frame, area: Rect, app: &App) {
@@ -379,7 +364,7 @@ mod tests {
     #[test]
     fn arc_view_content_matches_v0_1_golden() {
         let app = app_from_fixtures();
-        let backend = TestBackend::new(80, 22);
+        let backend = TestBackend::new(80, 21);
         let mut terminal = Terminal::new(backend).expect("terminal");
         terminal
             .draw(|frame| {
