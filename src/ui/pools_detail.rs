@@ -378,7 +378,7 @@ mod tests {
                 errors: ErrorCounts::default(),
                 children: vec![VdevNode {
                     name: "raidz1".into(),
-                    kind: VdevKind::Raidz,
+                    kind: VdevKind::Raidz { parity: 1 },
                     state: VdevState::Online,
                     size_bytes: Some(1024 * 1024 * 1024 * 1024),
                     errors: ErrorCounts::default(),

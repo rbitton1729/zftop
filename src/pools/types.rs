@@ -30,6 +30,37 @@ impl PoolInfo {
     /// `0.0..=1.0` share of capacity used. Returns `0.0` if `size_bytes`
     /// is `0` — shouldn't happen on a real pool but defends against
     /// divide-by-zero on a degraded-import pool.
+    /// Human-readable RAID label derived from the pool's top-level vdevs.
+    /// E.g. "RAIDZ2", "Mirror", "Stripe", "Mixed".
+    pub fn raid_label(&self) -> String {
+        // Top-level vdevs are the direct children of root, excluding
+        // log/cache/spare groups which aren't storage vdevs.
+        let tops: Vec<&VdevNode> = self
+            .root_vdev
+            .children
+            .iter()
+            .filter(|v| !matches!(v.kind, VdevKind::LogGroup | VdevKind::CacheGroup | VdevKind::SpareGroup))
+            .collect();
+
+        if tops.is_empty() {
+            return "—".into();
+        }
+
+        // Single top-level vdev.
+        if tops.len() == 1 {
+            return label_for_vdev(&tops[0]);
+        }
+
+        // Multiple top-level vdevs — if they're all the same type, use that
+        // label (e.g. 3x mirror = "Mirror"). Otherwise "Mixed".
+        let first = label_for_vdev(&tops[0]);
+        if tops[1..].iter().all(|v| label_for_vdev(v) == first) {
+            first
+        } else {
+            "Mixed".into()
+        }
+    }
+
     pub fn capacity_fraction(&self) -> f64 {
         if self.size_bytes == 0 {
             0.0
@@ -118,8 +149,8 @@ pub enum VdevState {
 pub enum VdevKind {
     /// The pool's root vdev — the parent of every top-level vdev.
     Root,
-    /// RAID-Z vdev (any parity level).
-    Raidz,
+    /// RAID-Z vdev. Parity level: 1 = RAIDZ1, 2 = RAIDZ2, 3 = RAIDZ3.
+    Raidz { parity: u8 },
     /// Mirror vdev.
     Mirror,
     /// Leaf disk backed by a block device.
@@ -138,6 +169,15 @@ pub enum VdevKind {
     SpareGroup,
     /// A vdev under a `SpareGroup`.
     SpareVdev,
+}
+
+fn label_for_vdev(v: &VdevNode) -> String {
+    match v.kind {
+        VdevKind::Raidz { parity } => format!("RAIDZ{parity}"),
+        VdevKind::Mirror => "Mirror".into(),
+        VdevKind::Disk | VdevKind::File => "Stripe".into(),
+        _ => "—".into(),
+    }
 }
 
 #[cfg(test)]
@@ -159,7 +199,7 @@ mod tests {
     fn vdev_total_errors_sums_tree() {
         let node = VdevNode {
             name: "raidz2-0".into(),
-            kind: VdevKind::Raidz,
+            kind: VdevKind::Raidz { parity: 2 },
             state: VdevState::Online,
             size_bytes: None,
             errors: ErrorCounts::default(),
@@ -184,7 +224,7 @@ mod tests {
             children: vec![
                 VdevNode {
                     name: "raidz1-0".into(),
-                    kind: VdevKind::Raidz,
+                    kind: VdevKind::Raidz { parity: 1 },
                     state: VdevState::Online,
                     size_bytes: Some(2 * 1024 * 1024 * 1024),
                     errors: ErrorCounts::default(),

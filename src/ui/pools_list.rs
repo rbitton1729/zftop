@@ -57,6 +57,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(2),   // marker
             Constraint::Length(14),  // name
             Constraint::Length(10),  // health
+            Constraint::Length(8),   // type
             Constraint::Length(28),  // capacity + minibar
             Constraint::Length(6),   // frag
             Constraint::Length(16),  // scrub
@@ -69,6 +70,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
             Constraint::Length(2),   // marker
             Constraint::Length(14),  // name
             Constraint::Length(10),  // health
+            Constraint::Length(8),   // type
             Constraint::Length(28),  // capacity + minibar
             Constraint::Length(16),  // scrub
         ];
@@ -84,6 +86,7 @@ fn build_header(wide: bool) -> Row<'static> {
             Span::raw(""),
             Span::styled("NAME", bold),
             Span::styled("HEALTH", bold),
+            Span::styled("TYPE", bold),
             Span::styled("CAPACITY", bold),
             Span::styled("FRAG", bold),
             Span::styled("SCRUB", bold),
@@ -94,6 +97,7 @@ fn build_header(wide: bool) -> Row<'static> {
             Span::raw(""),
             Span::styled("NAME", bold),
             Span::styled("HEALTH", bold),
+            Span::styled("TYPE", bold),
             Span::styled("CAPACITY", bold),
             Span::styled("SCRUB", bold),
         ])
@@ -104,6 +108,7 @@ fn build_row(p: &PoolInfo, is_selected: bool, wide: bool) -> Row<'static> {
     let marker = if is_selected { ">" } else { " " }.to_string();
     let name = p.name.clone();
     let health_label = pool_health_label(p.health);
+    let raid_type = p.raid_label();
     let capacity = render_capacity_cell(p);
     let scrub = render_scrub_cell(&p.scrub);
 
@@ -124,6 +129,7 @@ fn build_row(p: &PoolInfo, is_selected: bool, wide: bool) -> Row<'static> {
             Span::raw(marker),
             Span::raw(name),
             health_cell,
+            Span::raw(raid_type),
             Span::raw(capacity),
             Span::raw(frag),
             Span::raw(scrub),
@@ -134,6 +140,7 @@ fn build_row(p: &PoolInfo, is_selected: bool, wide: bool) -> Row<'static> {
             Span::raw(marker),
             Span::raw(name),
             health_cell,
+            Span::raw(raid_type),
             Span::raw(capacity),
             Span::raw(scrub),
         ])

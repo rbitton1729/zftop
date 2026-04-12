@@ -61,6 +61,8 @@ fn main() -> Result<()> {
     // Restore terminal no matter what
     terminal::disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
+    io::stdout().execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::All))?;
+    io::stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
 
     result
 }

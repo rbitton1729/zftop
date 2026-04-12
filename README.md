@@ -29,7 +29,7 @@ Three tabs, refreshing once a second:
 - **Pools** — pool list with health, capacity, fragmentation, scrub state, errors. `Enter` drills into the vdev tree.
 - **ARC** — size gauge, MFU/MRU/metadata breakdown, hit ratios, compression ratio, throughput.
 
-Data comes from `/proc/spl/kstat/zfs/arcstats` + `/proc/meminfo` on Linux, `sysctl` on FreeBSD. Pool data is read through `libzfs` directly — no `zpool` parsing.
+Data comes from `/proc/spl/kstat/zfs/arcstats` + `/proc/meminfo` on Linux, `sysctl` on FreeBSD. Pool data is read through `libzfs` directly without parsing `zpool`.
 
 ## Usage
 
@@ -54,18 +54,18 @@ zftop --help             # all options
 ## Requirements
 
 - **Linux** with OpenZFS loaded, or **FreeBSD 14+**
-- `libzfs` at runtime (comes with your distro's ZFS package — `zfsutils-linux` on Debian/Ubuntu, `zfs-utils` on Arch, etc. On FreeBSD it's in base)
+- `libzfs` at runtime (comes with ZFS)
 - Prebuilt binaries need glibc 2.31+ (Debian 11, Ubuntu 20.04, RHEL 9, Arch, etc). Older or musl systems: use `cargo install zftop`
 
 ## How the RAM bar works
 
-The RAM bar shows what's *currently held*, not what's reclaimable. This is intentional — it'll look fuller than htop's bar.
+The RAM bar shows what's *currently held*, not what's reclaimable. This is intentional, and it'll look fuller than htop's bar.
 
 **Linux:** User+Kernel | ARC (`size + overhead_size`) | Buf/Cache | Free (`MemFree`, not `MemAvailable`)
 
 **FreeBSD:** Wired | ARC | Active | Inactive+Laundry
 
-The "ZFS available" label on the right side is `arcstats.memory_available_bytes` — ZFS's own reclaim estimate, so you can reconcile with htop.
+The "ZFS available" label on the right side is `arcstats.memory_available_bytes`: ZFS's own reclaim estimate, so you can reconcile with htop.
 
 ## Building from source
 

@@ -119,6 +119,7 @@ pub const ZPOOL_CONFIG_CHILDREN: &CStr = c"children";
 pub const ZPOOL_CONFIG_PATH: &CStr = c"path";
 pub const ZPOOL_CONFIG_SCAN_STATS: &CStr = c"scan_stats";
 pub const ZPOOL_CONFIG_VDEV_STATS: &CStr = c"vdev_stats";
+pub const ZPOOL_CONFIG_NPARITY: &CStr = c"nparity";
 
 // ---------------------------------------------------------------------------
 // vdev "type" values — the string value behind ZPOOL_CONFIG_TYPE. Used to

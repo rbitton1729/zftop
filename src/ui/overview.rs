@@ -103,10 +103,12 @@ fn draw_pools_section(frame: &mut Frame, area: Rect, app: &App) {
                 format_bytes(p.size_bytes),
                 p.capacity_fraction() * 100.0
             );
+            let raid_type = p.raid_label();
             let scrub = format_scrub_compact(&p.scrub);
             Row::new(vec![
                 Span::raw(p.name.clone()),
                 Span::styled(health_label, widgets::pool_health_style(p.health)),
+                Span::raw(raid_type),
                 Span::raw(capacity),
                 Span::raw(scrub),
             ])
@@ -116,6 +118,7 @@ fn draw_pools_section(frame: &mut Frame, area: Rect, app: &App) {
     let widths = [
         Constraint::Length(16),
         Constraint::Length(10),
+        Constraint::Length(8),
         // Capacity cell formats as `"{used}/{total} ({pct}%)"`. `format_bytes`
         // tops out at 10-char strings (`"1023.0 TiB"`), so the worst-case
         // contents are `"1023.0 TiB/1023.0 TiB (100%)"` — exactly 28 chars.
@@ -128,6 +131,7 @@ fn draw_pools_section(frame: &mut Frame, area: Rect, app: &App) {
     let header = Row::new(vec![
         Span::styled("NAME", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled("HEALTH", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled("TYPE", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled("CAPACITY", Style::default().add_modifier(Modifier::BOLD)),
         Span::styled("SCRUB", Style::default().add_modifier(Modifier::BOLD)),
     ]);

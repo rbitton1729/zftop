@@ -338,8 +338,11 @@ fn walk_child_vdev(
 
     let kind = match (parent_group, type_str.as_str()) {
         (_, ffi::VDEV_TYPE_MIRROR) => VdevKind::Mirror,
-        (_, ffi::VDEV_TYPE_RAIDZ) => VdevKind::Raidz,
-        (_, ffi::VDEV_TYPE_DRAID) => VdevKind::Raidz,
+        (_, ffi::VDEV_TYPE_RAIDZ | ffi::VDEV_TYPE_DRAID) => {
+            let parity = nvlist_get_uint64(lz, nvl, ffi::ZPOOL_CONFIG_NPARITY)
+                .unwrap_or(1) as u8;
+            VdevKind::Raidz { parity }
+        }
         (_, ffi::VDEV_TYPE_REPLACING) => VdevKind::Mirror,
         (Some(VdevKind::LogGroup), ffi::VDEV_TYPE_DISK | ffi::VDEV_TYPE_FILE) => {
             VdevKind::LogVdev
