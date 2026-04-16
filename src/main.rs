@@ -53,6 +53,9 @@ fn main() -> Result<()> {
     terminal::enable_raw_mode()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
+    // Clear the screen at startup so zftop starts on a clean slate,
+    // but we do NOT clear on exit — the last frame stays in scrollback.
+    terminal.clear()?;
 
     // On Unix, catch SIGTSTP so we can cleanly leave raw mode before the
     // process is stopped. The terminal driver is in raw mode (ISIG off),
