@@ -1781,6 +1781,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "ratatui",
+ "signal-hook",
  "sysctl",
 ]
 

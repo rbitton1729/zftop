@@ -6,10 +6,14 @@ mod ui;
 
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
@@ -42,8 +46,7 @@ fn main() -> Result<()> {
     };
 
     // Set up terminal
-    terminal::enable_raw_mode()?;
-    io::stdout().execute(EnterAlternateScreen)?;
+    enter_tui()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     // Explicitly clear after entering the alternate screen. Most local
@@ -56,15 +59,57 @@ fn main() -> Result<()> {
     // clear removes the ghosts before the first frame renders.
     terminal.clear()?;
 
+    // On Unix, catch SIGTSTP so we can cleanly leave the alt-screen before
+    // the process is stopped. The terminal driver is in raw mode (ISIG off),
+    // so Ctrl+Z from the keyboard arrives as a key event rather than a
+    // signal — we also handle that path in `run`.
+    #[cfg(unix)]
+    let suspend_flag = {
+        let flag = Arc::new(AtomicBool::new(false));
+        signal_hook::flag::register(signal_hook::consts::SIGTSTP, Arc::clone(&flag))?;
+        flag
+    };
+
+    #[cfg(unix)]
+    let result = run(&mut terminal, &mut app, interval, suspend_flag);
+    #[cfg(not(unix))]
     let result = run(&mut terminal, &mut app, interval);
 
-    // Restore terminal no matter what
+    // Restore terminal no matter what. Do NOT clear the screen here — we want
+    // the last rendered frame to remain visible in the user's scrollback after
+    // we leave the alternate screen. A plain newline drops the shell prompt
+    // onto a fresh line below whatever was on the normal screen before zftop
+    // started.
     terminal::disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
-    io::stdout().execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::All))?;
-    io::stdout().execute(crossterm::cursor::MoveTo(0, 0))?;
+    println!();
 
     result
+}
+
+fn enter_tui() -> Result<()> {
+    terminal::enable_raw_mode()?;
+    io::stdout().execute(EnterAlternateScreen)?;
+    Ok(())
+}
+
+fn leave_tui() -> Result<()> {
+    terminal::disable_raw_mode()?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+    Ok(())
+}
+
+/// Suspend the process like a normal job-control stop: leave the alt-screen
+/// and raw mode so the user gets their shell back, then raise SIGSTOP (which
+/// cannot be caught). When the shell resumes us with `fg` (SIGCONT), we
+/// re-enter the alt-screen and force a full redraw.
+#[cfg(unix)]
+fn suspend_process(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    leave_tui()?;
+    signal_hook::low_level::raise(signal_hook::consts::SIGSTOP)?;
+    enter_tui()?;
+    terminal.clear()?;
+    Ok(())
 }
 
 type BuildSourcesResult = (
@@ -130,7 +175,56 @@ fn is_default_source(source: &Path) -> bool {
     }
 }
 
-fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App, interval: Duration) -> Result<()> {
+#[cfg(unix)]
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    interval: Duration,
+    suspend_flag: Arc<AtomicBool>,
+) -> Result<()> {
+    loop {
+        terminal.draw(|frame| ui::draw(frame, app))?;
+
+        // Check whether we were asked to suspend via SIGTSTP since last tick.
+        if suspend_flag.swap(false, Ordering::Relaxed) {
+            suspend_process(terminal)?;
+            continue;
+        }
+
+        // `event::poll` can return `ErrorKind::Interrupted` if a signal arrives
+        // while we're waiting — treat that as a normal tick so we fall through
+        // and re-check the suspend flag.
+        match event::poll(interval) {
+            Ok(true) => {
+                if let Event::Key(key) = event::read()? {
+                    if key.code == KeyCode::Char('z')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        suspend_process(terminal)?;
+                        continue;
+                    }
+                    app.on_key(key);
+                }
+            }
+            Ok(false) => {
+                app.refresh().ok();
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        }
+
+        if app.should_quit {
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn run(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    interval: Duration,
+) -> Result<()> {
     loop {
         terminal.draw(|frame| ui::draw(frame, app))?;
 
@@ -139,7 +233,6 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App, int
                 app.on_key(key);
             }
         } else {
-            // Timeout — refresh data
             app.refresh().ok();
         }
 
