@@ -55,7 +55,7 @@ zftop --help             # all options
 
 - **Linux** with OpenZFS loaded, or **FreeBSD 14+**
 - `libzfs` at runtime (comes with ZFS)
-- Prebuilt binaries need glibc 2.31+ (Debian 11, Ubuntu 20.04, RHEL 9, Arch, etc). Older or musl systems: use `cargo install zftop`
+- Prebuilt binaries need glibc 2.28+ (Debian 10, Ubuntu 18.04, RHEL 8, Arch, etc). Older or musl systems: use `cargo install zftop`
 
 ## How the RAM bar works
 
@@ -80,7 +80,7 @@ FreeBSD: same thing, install to `/usr/local/bin` instead. The `--source` and `--
 
 ## Roadmap
 
-zftop is a finishable project — ship it, stop, no plugin ecosystem.
+zftop is a finishable project (or at least everything up until fleet mode, which will likely take a lot of ongoing work).
 
 - **v0.1** ARC dashboard ✓
 - **v0.2** Pools: capacity, health, vdev trees, scrub status ✓

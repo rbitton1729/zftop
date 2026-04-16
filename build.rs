@@ -10,8 +10,8 @@
 // (`dlopen` / `dlsym` / `dlclose` / `dlerror`) resolves at link time:
 // - glibc 2.34+ (Debian 12, Ubuntu 24.04, Arch current): dlopen lives in
 //   `libc.so.6` and `-ldl` is a no-op stub. Either way works.
-// - glibc 2.31 (Debian 11, Ubuntu 20.04): dlopen is in `libdl.so.2`;
-//   `-ldl` is required.
+// - glibc 2.28–2.33 (Debian 10/11, Ubuntu 18.04/20.04, RHEL 8): dlopen
+//   is in `libdl.so.2`; `-ldl` is required.
 // - FreeBSD 14+: dlopen is in the base libc; `-ldl` is unnecessary but
 //   a no-op link flag is harmless.
 //

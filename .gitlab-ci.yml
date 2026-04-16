@@ -37,10 +37,13 @@ cache:
 
 test:
   stage: test
-  # Pinned to the same Debian 11 image the build jobs use so that tests
-  # run against the same glibc floor (2.31) the release binaries target.
-  image: rust:1-bullseye
+  # Pinned to the same Debian 10 image the build jobs use so that tests
+  # run against the same glibc floor (2.28) the release binaries target.
+  # rust:1-buster ships Rust 1.79 (frozen at Buster EOL), so we update
+  # the toolchain via rustup before building.
+  image: rust:1-buster
   before_script:
+    - rustup default stable
     # No libzfs install needed. zftop dlopens libzfs+libnvpair at runtime
     # (see src/pools/ffi.rs::Libzfs::load), so the build has no link-time
     # dependency on libzfs at all. The tests never touch libzfs in practice:
@@ -56,13 +59,14 @@ test:
 
 build:x86_64:
   stage: build
-  image: rust:1-bullseye
+  image: rust:1-buster
   variables:
     TARGET: x86_64-unknown-linux-gnu
-  # No before_script needed. zftop dlopens libzfs at runtime, so no
-  # libzfs-dev install is required at build time. The resulting binary
-  # has only libc.so.6 / libgcc_s.so.1 in DT_NEEDED — it runs on any
-  # glibc 2.31+ distro regardless of libzfs soname.
+  before_script:
+    - rustup default stable
+  # zftop dlopens libzfs at runtime, so no libzfs-dev install is required
+  # at build time. The resulting binary runs on any glibc 2.28+ distro
+  # (Debian 10, Ubuntu 18.04, RHEL 8, Arch, etc.) regardless of libzfs soname.
   script:
     - |
       if [ -n "$CI_COMMIT_TAG" ]; then
@@ -80,7 +84,7 @@ build:x86_64:
 
 build:aarch64:
   stage: build
-  image: rust:1-bullseye
+  image: rust:1-buster
   variables:
     TARGET: aarch64-unknown-linux-gnu
     # Cross-compile linker. The cross toolchain is installed in before_script
@@ -89,9 +93,11 @@ build:aarch64:
     # host).
     CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
   before_script:
-    # `rust:1-bullseye` is a Debian 11 image with the host (amd64) Rust
-    # toolchain pre-installed but no cross toolchain and no aarch64 std.
-    # We need three things:
+    - rustup default stable
+    # Buster went EOL June 2024; repos moved to archive.debian.org.
+    - sed -i 's|deb.debian.org|archive.debian.org|g' /etc/apt/sources.list
+    - sed -i '/buster-updates/d' /etc/apt/sources.list
+    # `rust:1-buster` is a Debian 10 image. We need three things for cross:
     #   - gcc-aarch64-linux-gnu       — the cross compiler/linker driver
     #                                   and aarch64-linux-gnu-strip used
     #                                   below.
