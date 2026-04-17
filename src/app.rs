@@ -1,7 +1,7 @@
 // App state and update logic.
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui::style::Color;
 
 use crate::arcstats::ArcStats;
@@ -289,6 +289,30 @@ impl App {
         // Per-tab bindings.
         if self.current_tab == Tab::Pools {
             self.on_key_pools(key);
+        }
+    }
+
+    /// Handle a mouse event. Scroll wheel events on the Pools list move
+     /// the selection; elsewhere they're ignored. Click/drag/move events
+     /// are ignored entirely — zftop is keyboard-driven.
+    pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::ScrollDown => self.scroll(1),
+            MouseEventKind::ScrollUp => self.scroll(-1),
+            _ => {}
+        }
+    }
+
+    fn scroll(&mut self, delta: i32) {
+        if self.current_tab == Tab::Pools {
+            if let PoolsView::List { selected } = &mut self.pools_view {
+                if self.pools_snapshot.is_empty() {
+                    return;
+                }
+                let last = self.pools_snapshot.len() - 1;
+                let new = (*selected as i32 + delta).clamp(0, last as i32) as usize;
+                *selected = new;
+            }
         }
     }
 

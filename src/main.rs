@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::cursor::MoveTo;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+};
 use crossterm::terminal;
 use crossterm::ExecutableCommand;
 use ratatui::backend::{Backend, CrosstermBackend};
@@ -51,6 +53,7 @@ fn main() -> Result<()> {
     // scrollback after `zftop` exits, the same way `top -n1` or `less`
     // leave their output visible.
     terminal::enable_raw_mode()?;
+    io::stdout().execute(EnableMouseCapture)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     // Clear the screen at startup so zftop starts on a clean slate,
@@ -77,6 +80,7 @@ fn main() -> Result<()> {
     // frame is already on screen — we just need to drop out of raw mode
     // and park the cursor below the drawn content so the shell prompt
     // starts on a fresh line.
+    io::stdout().execute(DisableMouseCapture)?;
     terminal::disable_raw_mode()?;
     let size = terminal.backend().size().unwrap_or_default();
     io::stdout().execute(MoveTo(0, size.height.saturating_sub(1)))?;
@@ -91,9 +95,11 @@ fn main() -> Result<()> {
 /// raw mode and force a full redraw so the frame repaints from scratch.
 #[cfg(unix)]
 fn suspend_process(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    io::stdout().execute(DisableMouseCapture)?;
     terminal::disable_raw_mode()?;
     signal_hook::low_level::raise(signal_hook::consts::SIGSTOP)?;
     terminal::enable_raw_mode()?;
+    io::stdout().execute(EnableMouseCapture)?;
     terminal.clear()?;
     Ok(())
 }
@@ -181,8 +187,8 @@ fn run(
         // while we're waiting — treat that as a normal tick so we fall through
         // and re-check the suspend flag.
         match event::poll(interval) {
-            Ok(true) => {
-                if let Event::Key(key) = event::read()? {
+            Ok(true) => match event::read()? {
+                Event::Key(key) => {
                     if key.code == KeyCode::Char('z')
                         && key.modifiers.contains(KeyModifiers::CONTROL)
                     {
@@ -191,7 +197,9 @@ fn run(
                     }
                     app.on_key(key);
                 }
-            }
+                Event::Mouse(mouse) => app.on_mouse(mouse),
+                _ => {}
+            },
             Ok(false) => {
                 app.refresh().ok();
             }
@@ -215,8 +223,10 @@ fn run(
         terminal.draw(|frame| ui::draw(frame, app))?;
 
         if event::poll(interval)? {
-            if let Event::Key(key) = event::read()? {
-                app.on_key(key);
+            match event::read()? {
+                Event::Key(key) => app.on_key(key),
+                Event::Mouse(mouse) => app.on_mouse(mouse),
+                _ => {}
             }
         } else {
             app.refresh().ok();
