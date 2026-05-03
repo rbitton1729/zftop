@@ -323,6 +323,7 @@ fn walk_root_vdev(
         size_bytes,
         errors,
         children,
+        device_path: None,
     })
 }
 
@@ -358,18 +359,28 @@ fn walk_child_vdev(
         (_, _) => VdevKind::Disk, // fallback for unknown types
     };
 
-    // Display name. Leaf disks/files get their `path` (stripped of "/dev/"
-    // prefix for readability). Groups/RAIDZ/Mirror inherit the type_str
-    // as their label.
-    let name = match kind {
+    // Read the raw path once. Leaves get both a stripped `name` (for
+    // compact display) and the full `device_path` (for the v0.3.1 tree
+    // view's wide-layout DEVICE_PATH column). Interior vdevs and group
+    // headers get only `name` from `type_str` and `device_path = None`.
+    let (name, device_path) = match kind {
         VdevKind::Disk
         | VdevKind::File
         | VdevKind::LogVdev
         | VdevKind::CacheVdev
-        | VdevKind::SpareVdev => nvlist_get_string(lz, nvl, ffi::ZPOOL_CONFIG_PATH)
-            .map(|p| p.strip_prefix("/dev/").unwrap_or(&p).to_string())
-            .unwrap_or_else(|_| type_str.clone()),
-        _ => type_str.clone(),
+        | VdevKind::SpareVdev => {
+            match nvlist_get_string(lz, nvl, ffi::ZPOOL_CONFIG_PATH) {
+                Ok(full) => {
+                    let stripped = full
+                        .strip_prefix("/dev/")
+                        .unwrap_or(&full)
+                        .to_string();
+                    (stripped, Some(full))
+                }
+                Err(_) => (type_str.clone(), None),
+            }
+        }
+        _ => (type_str.clone(), None),
     };
 
     let (state, errors) = read_vdev_stats(lz, nvl);
@@ -410,6 +421,7 @@ fn walk_child_vdev(
         size_bytes,
         errors,
         children,
+        device_path,
     })
 }
 

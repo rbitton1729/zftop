@@ -123,6 +123,12 @@ pub struct VdevNode {
     pub size_bytes: Option<u64>,
     pub errors: ErrorCounts,
     pub children: Vec<VdevNode>,
+    /// Long device path for leaf disks (`Disk` / `File` / `LogVdev` /
+    /// `CacheVdev` / `SpareVdev` kinds). `None` for interior nodes
+    /// (raidz/mirror/root) and for group headers (logs/cache/spares).
+    /// Read from the `ZPOOL_CONFIG_PATH` nvlist key — same source as
+    /// `name`, just without the `/dev/` strip applied.
+    pub device_path: Option<String>,
 }
 
 impl VdevNode {
@@ -192,6 +198,7 @@ mod tests {
             size_bytes: Some(1024 * 1024 * 1024),
             errors,
             children: vec![],
+            device_path: None,
         }
     }
 
@@ -208,6 +215,7 @@ mod tests {
                 leaf("sdb", ErrorCounts { read: 0, write: 2, checksum: 0 }),
                 leaf("sdc", ErrorCounts { read: 0, write: 0, checksum: 3 }),
             ],
+            device_path: None,
         };
         assert_eq!(node.total_errors(), 6);
     }
@@ -232,6 +240,7 @@ mod tests {
                         leaf("sda", ErrorCounts { read: 1, ..Default::default() }),
                         leaf("sdb", ErrorCounts { write: 2, ..Default::default() }),
                     ],
+                    device_path: None,
                 },
                 VdevNode {
                     name: "logs".into(),
@@ -243,8 +252,10 @@ mod tests {
                         "nvme0n1p1",
                         ErrorCounts { checksum: 4, ..Default::default() },
                     )],
+                    device_path: None,
                 },
             ],
+            device_path: None,
         };
         assert_eq!(node.total_errors(), 7);
     }

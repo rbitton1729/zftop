@@ -353,6 +353,7 @@ mod tests {
             size_bytes: Some(size),
             errors,
             children: vec![],
+            device_path: None,
         }
     }
 
@@ -388,7 +389,9 @@ mod tests {
                         leaf("sdc", 256 * 1024 * 1024 * 1024, ErrorCounts::default()),
                         leaf("sdd", 256 * 1024 * 1024 * 1024, ErrorCounts::default()),
                     ],
+                    device_path: None,
                 }],
+                device_path: None,
             },
         }
     }

@@ -1127,6 +1127,7 @@ mod tests {
                 size_bytes: Some(size),
                 errors: PoolErrors::default(),
                 children: vec![],
+                device_path: None,
             },
         }
     }

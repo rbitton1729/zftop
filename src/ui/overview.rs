@@ -236,6 +236,7 @@ mod tests {
                 size_bytes: Some(size),
                 errors: ErrorCounts::default(),
                 children: vec![],
+                device_path: None,
             },
         }
     }
