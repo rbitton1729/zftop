@@ -38,9 +38,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let wide = inner.width >= 100;
-    let selected_idx = match app.pools_view {
-        PoolsView::List { selected } => selected,
-        PoolsView::Detail { pool_index } => pool_index, // keep the row highlighted while in detail
+    let selected_idx = match &app.pools_view {
+        PoolsView::Tree { selected, .. } => *selected,
+        PoolsView::Detail { pool_index, .. } => *pool_index,
     };
 
     let rows: Vec<Row> = app
@@ -340,7 +340,10 @@ mod tests {
             test_pool("c", PoolHealth::Online, 100, 50),
         ];
         let mut app = app_for_pools_list(pools, None);
-        app.pools_view = PoolsView::List { selected: 1 };
+        app.pools_view = PoolsView::Tree {
+            expanded: std::collections::BTreeSet::new(),
+            selected: 1,
+        };
         let out = render_pools(&app, 120, 24);
         // The selected row should have `>` as the marker prefix. Find the
         // line containing "b" and assert it has the marker.

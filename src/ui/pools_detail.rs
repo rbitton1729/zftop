@@ -21,9 +21,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     // Figure out which pool to show. Defensive clamp in case pools_view
     // references an out-of-range index (shouldn't happen — clamp_pools_selection
     // runs after every refresh — but don't panic if it does).
-    let pool_index = match app.pools_view {
-        PoolsView::Detail { pool_index } => pool_index,
-        PoolsView::List { selected } => selected,
+    let pool_index = match &app.pools_view {
+        PoolsView::Detail { pool_index, .. } => *pool_index,
+        PoolsView::Tree { selected, .. } => *selected,
     };
 
     // If there's no pool at this index (empty snapshot or libzfs error),
@@ -438,7 +438,10 @@ mod tests {
             App::new(arc_reader, mem, pools_source, None, None, None).expect("fixture App::new");
         app.current_tab = Tab::Pools;
         app.pools_snapshot = pools;
-        app.pools_view = PoolsView::Detail { pool_index: 0 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 0,
+            expanded: std::collections::BTreeSet::new(),
+        };
         app
     }
 
@@ -572,7 +575,10 @@ mod tests {
     fn detail_shows_empty_notice_when_index_out_of_range() {
         let mut app = app_for_detail(raidz_pool());
         // Force a bad index.
-        app.pools_view = PoolsView::Detail { pool_index: 42 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 42,
+            expanded: std::collections::BTreeSet::new(),
+        };
         let out = render_detail(&app);
         assert!(
             out.contains("no pool selected"),

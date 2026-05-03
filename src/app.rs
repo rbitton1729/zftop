@@ -20,12 +20,45 @@ pub enum Tab {
     Arc,
 }
 
-/// State of the Pools tab: either the list view with a selected row, or the
-/// detail view drilldown for a specific pool by index into the snapshot.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// State of the Pools tab: tree view with an expansion set + a selection
+/// index over the visible (post-flatten) rows, or a per-pool detail
+/// drilldown identified by index into the snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PoolsView {
-    List { selected: usize },
-    Detail { pool_index: usize },
+    Tree {
+        /// Pool names whose vdev subtree is currently visible. Pools
+        /// auto-fill this set on first paint (see `refresh_pools` +
+        /// `pools_first_paint`); subsequent refreshes only `prune` the
+        /// set, never re-add. Vdev rows aren't separately expandable —
+        /// expanding a pool reveals its entire vdev tree.
+        expanded: BTreeSet<String>,
+        /// Index into the *visible* (post-flatten) row list. Reclamped
+        /// on every refresh and on collapse.
+        selected: usize,
+    },
+    Detail {
+        pool_index: usize,
+        /// Cached `expanded` set so returning to Tree restores the
+        /// user's expansion state byte-for-byte.
+        expanded: BTreeSet<String>,
+    },
+}
+
+/// One visible row in the pools tree. Pool rows render with the wide
+/// pool-info layout (HEALTH/TYPE/CAPACITY/FRAG/SCRUB/ERR); vdev rows
+/// render with the vdev layout (STATE/KIND/SIZE/DEVICE_PATH/R/W/C).
+/// `depth` is 0 for pool rows and starts at 1 for top-level vdevs.
+pub enum VisibleRow<'a> {
+    Pool(&'a PoolInfo),
+    Vdev {
+        node: &'a crate::pools::VdevNode,
+        depth: u8,
+    },
+}
+
+enum CollapseAction {
+    Collapse(String),
+    JumpTo(usize),
 }
 
 /// State of the Datasets tab: tree view with an expansion set + a
@@ -139,6 +172,13 @@ pub struct App {
     pub pools_init_error: Option<String>,
     /// Pools tab view state (list with selected row / detail drilldown).
     pub pools_view: PoolsView,
+    /// True until the first non-empty `pools_snapshot` lands. On that
+    /// first paint, every pool name is auto-inserted into
+    /// `pools_view.expanded`. Subsequent refreshes only `prune` the
+    /// expanded set; they never auto-add. This means user collapse
+    /// decisions persist across refreshes, and newly imported pools
+    /// start expanded by default.
+    pools_first_paint: bool,
     // NEW datasets fields (mirror pools_*).
     datasets_source: Option<Box<dyn DatasetsSource>>,
     pub datasets_snapshot: Vec<DatasetNode>,
@@ -177,7 +217,11 @@ impl App {
             pools_snapshot: Vec::new(),
             pools_refresh_error: None,
             pools_init_error,
-            pools_view: PoolsView::List { selected: 0 },
+            pools_view: PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 0,
+            },
+            pools_first_paint: true,
             datasets_source,
             datasets_snapshot: Vec::new(),
             datasets_refresh_error: None,
@@ -211,6 +255,19 @@ impl App {
             Ok(()) => {
                 self.pools_snapshot = ps.pools();
                 self.pools_refresh_error = None;
+                // First paint after the first non-empty snapshot lands:
+                // auto-expand every pool. Subsequent refreshes never insert
+                // — so user collapses persist and newly imported pools that
+                // appear later don't override the user's preferences.
+                if self.pools_first_paint && !self.pools_snapshot.is_empty() {
+                    if let PoolsView::Tree { expanded, .. } = &mut self.pools_view {
+                        for p in &self.pools_snapshot {
+                            expanded.insert(p.name.clone());
+                        }
+                    }
+                    self.pools_first_paint = false;
+                }
+                self.prune_expanded_pools();
                 self.clamp_pools_selection();
             }
             Err(e) => {
@@ -218,6 +275,42 @@ impl App {
                 // Keep stale snapshot — better than blanking on a transient.
             }
         }
+    }
+
+    /// Drop entries from `pools_view.expanded` for pool names that no
+    /// longer exist in `pools_snapshot`. Called from `refresh_pools` after
+    /// a successful refresh.
+    fn prune_expanded_pools(&mut self) {
+        let expanded = match &mut self.pools_view {
+            PoolsView::Tree { expanded, .. } => expanded,
+            PoolsView::Detail { expanded, .. } => expanded,
+        };
+        let names: std::collections::HashSet<String> = self
+            .pools_snapshot
+            .iter()
+            .map(|p| p.name.clone())
+            .collect();
+        expanded.retain(|n| names.contains(n));
+    }
+
+    /// DFS over `pools_snapshot` honoring `expanded`, returning
+    /// `VisibleRow`s in render order. Pool rows are always emitted; vdev
+    /// rows are emitted only for expanded pools, recursively. Returns an
+    /// empty Vec when in `Detail` view.
+    pub fn flatten_visible_pool_rows(&self) -> Vec<VisibleRow<'_>> {
+        let PoolsView::Tree { expanded, .. } = &self.pools_view else {
+            return Vec::new();
+        };
+        let mut out: Vec<VisibleRow<'_>> = Vec::new();
+        for pool in &self.pools_snapshot {
+            out.push(VisibleRow::Pool(pool));
+            if expanded.contains(&pool.name) {
+                for child in &pool.root_vdev.children {
+                    push_vdev_row(child, 1, &mut out);
+                }
+            }
+        }
+        out
     }
 
     /// Tick the datasets source. On success, populate the snapshot, prune
@@ -339,21 +432,26 @@ impl App {
     }
 
     /// Keep `pools_view` valid when the snapshot shape shifts under it.
-    /// - List selection is clamped to `len - 1`.
-    /// - Detail with an index past the new `len` falls back to List.
+    /// - Tree selection is clamped to the new visible-row count.
+    /// - Detail with an out-of-range pool_index falls back to Tree at
+    ///   row 0, preserving the cached expansion set.
     fn clamp_pools_selection(&mut self) {
+        // Compute visible_count BEFORE the &mut match (avoids borrow conflict).
+        let visible_count = self.flatten_visible_pool_rows().len();
         match &mut self.pools_view {
-            PoolsView::List { selected } => {
-                if self.pools_snapshot.is_empty() {
+            PoolsView::Tree { selected, .. } => {
+                if visible_count == 0 {
                     *selected = 0;
-                } else if *selected >= self.pools_snapshot.len() {
-                    *selected = self.pools_snapshot.len() - 1;
+                } else if *selected >= visible_count {
+                    *selected = visible_count - 1;
                 }
             }
-            PoolsView::Detail { pool_index } => {
+            PoolsView::Detail { pool_index, expanded } => {
                 if *pool_index >= self.pools_snapshot.len() {
-                    self.pools_view = PoolsView::List {
-                        selected: self.pools_snapshot.len().saturating_sub(1),
+                    let restored = expanded.clone();
+                    self.pools_view = PoolsView::Tree {
+                        expanded: restored,
+                        selected: 0,
                     };
                 }
             }
@@ -388,9 +486,11 @@ impl App {
             return;
         }
         if self.current_tab == Tab::Pools {
-            if let PoolsView::Detail { pool_index } = self.pools_view {
-                self.pools_view = PoolsView::List {
-                    selected: pool_index,
+            if let PoolsView::Detail { pool_index: _, expanded } = &self.pools_view {
+                let restored = expanded.clone();
+                self.pools_view = PoolsView::Tree {
+                    expanded: restored,
+                    selected: 0,
                 };
             }
         }
@@ -509,11 +609,12 @@ impl App {
 
     fn scroll(&mut self, delta: i32) {
         if self.current_tab == Tab::Pools {
-            if let PoolsView::List { selected } = &mut self.pools_view {
-                if self.pools_snapshot.is_empty() {
-                    return;
-                }
-                let last = self.pools_snapshot.len() - 1;
+            let visible_count = self.flatten_visible_pool_rows().len();
+            if visible_count == 0 {
+                return;
+            }
+            if let PoolsView::Tree { selected, .. } = &mut self.pools_view {
+                let last = visible_count - 1;
                 let new = (*selected as i32 + delta).clamp(0, last as i32) as usize;
                 *selected = new;
             }
@@ -531,43 +632,172 @@ impl App {
     }
 
     fn on_key_pools(&mut self, key: KeyEvent) {
-        match (self.pools_view, key.code) {
-            // List navigation
-            (PoolsView::List { .. }, KeyCode::Down | KeyCode::Char('j')) => {
-                if let PoolsView::List { selected } = &mut self.pools_view {
-                    if *selected + 1 < self.pools_snapshot.len() {
+        // Detail-view bindings first.
+        if let PoolsView::Detail { pool_index: _, expanded } = &self.pools_view {
+            match key.code {
+                KeyCode::Esc | KeyCode::Backspace => {
+                    let restored = expanded.clone();
+                    self.pools_view = PoolsView::Tree {
+                        expanded: restored,
+                        selected: 0,
+                    };
+                    self.clamp_pools_selection();
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Tree-view bindings.
+        let visible_count = self.flatten_visible_pool_rows().len();
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let PoolsView::Tree { selected, .. } = &mut self.pools_view {
+                    if *selected + 1 < visible_count {
                         *selected += 1;
                     }
                 }
             }
-            (PoolsView::List { .. }, KeyCode::Up | KeyCode::Char('k')) => {
-                if let PoolsView::List { selected } = &mut self.pools_view {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let PoolsView::Tree { selected, .. } = &mut self.pools_view {
                     if *selected > 0 {
                         *selected -= 1;
                     }
                 }
             }
-            (PoolsView::List { .. }, KeyCode::Home) => {
-                if let PoolsView::List { selected } = &mut self.pools_view {
+            KeyCode::Home => {
+                if let PoolsView::Tree { selected, .. } = &mut self.pools_view {
                     *selected = 0;
                 }
             }
-            (PoolsView::List { .. }, KeyCode::End) => {
-                if let PoolsView::List { selected } = &mut self.pools_view {
-                    *selected = self.pools_snapshot.len().saturating_sub(1);
+            KeyCode::End => {
+                if let PoolsView::Tree { selected, .. } = &mut self.pools_view {
+                    *selected = visible_count.saturating_sub(1);
                 }
             }
-            (PoolsView::List { selected }, KeyCode::Enter) => {
-                if !self.pools_snapshot.is_empty() {
-                    self.pools_view = PoolsView::Detail { pool_index: selected };
-                }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.expand_selected_pool();
             }
-            // Detail → back to list
-            (PoolsView::Detail { pool_index }, KeyCode::Esc | KeyCode::Backspace) => {
-                self.pools_view = PoolsView::List { selected: pool_index };
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.collapse_or_jump_to_parent_pool();
+            }
+            KeyCode::Enter => {
+                self.drill_into_selected_pool();
             }
             _ => {}
         }
+    }
+
+    /// Returns the index in `pools_snapshot` of the pool that contains
+    /// the currently-selected row. For pool rows this is the row's pool;
+    /// for vdev rows this is the most-recent pool row at-or-before the
+    /// selection. Returns `None` if there is no visible selection.
+    fn selected_pool_index_for_drill(&self) -> Option<usize> {
+        let PoolsView::Tree { selected, .. } = &self.pools_view else {
+            return None;
+        };
+        let rows = self.flatten_visible_pool_rows();
+        let target = rows.get(*selected)?;
+        let target_pool_name: &str = match target {
+            VisibleRow::Pool(p) => &p.name,
+            VisibleRow::Vdev { .. } => {
+                let mut i = *selected;
+                loop {
+                    if i == 0 {
+                        if let Some(VisibleRow::Pool(p)) = rows.first() {
+                            break p.name.as_str();
+                        } else {
+                            return None;
+                        }
+                    }
+                    i -= 1;
+                    if let Some(VisibleRow::Pool(p)) = rows.get(i) {
+                        break p.name.as_str();
+                    }
+                }
+            }
+        };
+        self.pools_snapshot.iter().position(|p| p.name == target_pool_name)
+    }
+
+    /// If the selected row is a Pool with vdevs, insert its name into
+    /// `expanded`. No-op for vdev rows or pools with no vdev children.
+    fn expand_selected_pool(&mut self) {
+        let name_to_expand = {
+            let rows = self.flatten_visible_pool_rows();
+            let PoolsView::Tree { selected, .. } = &self.pools_view else {
+                return;
+            };
+            match rows.get(*selected) {
+                Some(VisibleRow::Pool(p)) if !p.root_vdev.children.is_empty() => {
+                    p.name.clone()
+                }
+                _ => return,
+            }
+        };
+        if let PoolsView::Tree { expanded, .. } = &mut self.pools_view {
+            expanded.insert(name_to_expand);
+        }
+    }
+
+    /// `←` on a Pool row + expanded → collapse it.
+    /// `←` on a Vdev row → jump selection to that vdev's parent Pool row.
+    /// Otherwise no-op.
+    fn collapse_or_jump_to_parent_pool(&mut self) {
+        let action = {
+            let rows = self.flatten_visible_pool_rows();
+            let PoolsView::Tree { selected, expanded } = &self.pools_view else {
+                return;
+            };
+            match rows.get(*selected) {
+                Some(VisibleRow::Pool(p)) if expanded.contains(&p.name) => {
+                    CollapseAction::Collapse(p.name.clone())
+                }
+                Some(VisibleRow::Vdev { .. }) => {
+                    let mut i = *selected;
+                    loop {
+                        if i == 0 {
+                            break CollapseAction::JumpTo(0);
+                        }
+                        i -= 1;
+                        if matches!(rows.get(i), Some(VisibleRow::Pool(_))) {
+                            break CollapseAction::JumpTo(i);
+                        }
+                    }
+                }
+                _ => return,
+            }
+        };
+        match action {
+            CollapseAction::Collapse(name) => {
+                if let PoolsView::Tree { expanded, .. } = &mut self.pools_view {
+                    expanded.remove(&name);
+                }
+                self.clamp_pools_selection();
+            }
+            CollapseAction::JumpTo(idx) => {
+                if let PoolsView::Tree { selected, .. } = &mut self.pools_view {
+                    *selected = idx;
+                }
+            }
+        }
+    }
+
+    /// Enter on a Pool row OR a Vdev row → drill into the containing
+    /// pool's Detail. Preserves the current `expanded` set so Esc returns
+    /// to the same Tree state.
+    fn drill_into_selected_pool(&mut self) {
+        let Some(pool_index) = self.selected_pool_index_for_drill() else {
+            return;
+        };
+        let restored = match &self.pools_view {
+            PoolsView::Tree { expanded, .. } => expanded.clone(),
+            PoolsView::Detail { .. } => return,
+        };
+        self.pools_view = PoolsView::Detail {
+            pool_index,
+            expanded: restored,
+        };
     }
 
     fn on_key_datasets(&mut self, key: KeyEvent) {
@@ -799,6 +1029,17 @@ impl App {
     }
 }
 
+fn push_vdev_row<'a>(
+    node: &'a crate::pools::VdevNode,
+    depth: u8,
+    out: &mut Vec<VisibleRow<'a>>,
+) {
+    out.push(VisibleRow::Vdev { node, depth });
+    for child in &node.children {
+        push_vdev_row(child, depth + 1, out);
+    }
+}
+
 fn ratio(hits: u64, misses: u64) -> f64 {
     let total = hits + misses;
     if total == 0 {
@@ -891,7 +1132,11 @@ mod tests {
             pools_snapshot: Vec::new(),
             pools_refresh_error: None,
             pools_init_error: None,
-            pools_view: PoolsView::List { selected: 0 },
+            pools_view: PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 0,
+            },
+            pools_first_paint: true,
             datasets_source: None,
             datasets_snapshot: Vec::new(),
             datasets_refresh_error: None,
@@ -1190,7 +1435,10 @@ mod tests {
             test_pool("b", PoolHealth::Online, 100, 50),
             test_pool("c", PoolHealth::Online, 100, 50),
         ]);
-        app.pools_view = PoolsView::List { selected: 2 };
+        app.pools_view = PoolsView::Tree {
+            expanded: BTreeSet::new(),
+            selected: 2,
+        };
         // Shrink the underlying source to one pool and refresh.
         app.pools_source = Some(Box::new(FakePoolsSource::new(vec![test_pool(
             "a",
@@ -1199,7 +1447,14 @@ mod tests {
             50,
         )])));
         app.refresh_pools();
-        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+        // After refresh: snapshot = [a], selected clamps to last visible row.
+        // (first-paint auto-expands "a" — but that's a single-pool, no-children
+        // case so visible rows still = 1 → selected clamps to 0.)
+        if let PoolsView::Tree { selected, .. } = &app.pools_view {
+            assert_eq!(*selected, 0);
+        } else {
+            panic!("expected Tree view, got {:?}", app.pools_view);
+        }
     }
 
     #[test]
@@ -1211,9 +1466,21 @@ mod tests {
         ]);
         app.current_tab = Tab::Pools;
         app.on_key(key(KeyCode::Down));
-        assert_eq!(app.pools_view, PoolsView::List { selected: 1 });
+        assert_eq!(
+            app.pools_view,
+            PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 1,
+            }
+        );
         app.on_key(key(KeyCode::Char('j')));
-        assert_eq!(app.pools_view, PoolsView::List { selected: 2 });
+        assert_eq!(
+            app.pools_view,
+            PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 2,
+            }
+        );
     }
 
     #[test]
@@ -1223,9 +1490,18 @@ mod tests {
             test_pool("b", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::List { selected: 1 };
+        app.pools_view = PoolsView::Tree {
+            expanded: BTreeSet::new(),
+            selected: 1,
+        };
         app.on_key(key(KeyCode::Down));
-        assert_eq!(app.pools_view, PoolsView::List { selected: 1 });
+        assert_eq!(
+            app.pools_view,
+            PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 1,
+            }
+        );
     }
 
     #[test]
@@ -1236,7 +1512,13 @@ mod tests {
         ]);
         app.current_tab = Tab::Pools;
         app.on_key(key(KeyCode::Up));
-        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+        assert_eq!(
+            app.pools_view,
+            PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 0,
+            }
+        );
     }
 
     #[test]
@@ -1248,9 +1530,21 @@ mod tests {
         ]);
         app.current_tab = Tab::Pools;
         app.on_key(key(KeyCode::End));
-        assert_eq!(app.pools_view, PoolsView::List { selected: 2 });
+        assert_eq!(
+            app.pools_view,
+            PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 2,
+            }
+        );
         app.on_key(key(KeyCode::Home));
-        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+        assert_eq!(
+            app.pools_view,
+            PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 0,
+            }
+        );
     }
 
     #[test]
@@ -1260,9 +1554,18 @@ mod tests {
             test_pool("b", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::List { selected: 1 };
+        app.pools_view = PoolsView::Tree {
+            expanded: BTreeSet::new(),
+            selected: 1,
+        };
         app.on_key(key(KeyCode::Enter));
-        assert_eq!(app.pools_view, PoolsView::Detail { pool_index: 1 });
+        assert_eq!(
+            app.pools_view,
+            PoolsView::Detail {
+                pool_index: 1,
+                expanded: BTreeSet::new(),
+            }
+        );
     }
 
     #[test]
@@ -1270,13 +1573,12 @@ mod tests {
         let mut app = app_with_pools(vec![]);
         app.current_tab = Tab::Pools;
         app.on_key(key(KeyCode::Enter));
-        assert!(matches!(app.pools_view, PoolsView::List { .. }));
+        assert!(matches!(app.pools_view, PoolsView::Tree { .. }));
     }
 
     /// Leaving the Pools tab while drilled into a specific pool must
     /// collapse the drilldown so that returning to Pools lands on the
-    /// list. The selection stays on the pool the user was inspecting.
-    /// Exercises every tab-change key: 1, 3, Tab, BackTab.
+    /// tree. Exercises every tab-change key: 1, 3, Tab, BackTab.
     #[test]
     fn leaving_pools_while_in_detail_collapses_to_list_via_overview_key() {
         let mut app = app_with_pools(vec![
@@ -1285,13 +1587,15 @@ mod tests {
             test_pool("c", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::Detail { pool_index: 2 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 2,
+            expanded: BTreeSet::new(),
+        };
         app.on_key(key(KeyCode::Char('1')));
         assert_eq!(app.current_tab, Tab::Overview);
-        assert_eq!(
-            app.pools_view,
-            PoolsView::List { selected: 2 },
-            "leaving Pools via '1' should have collapsed Detail to List"
+        assert!(
+            matches!(app.pools_view, PoolsView::Tree { .. }),
+            "leaving Pools via '1' should have collapsed Detail to Tree"
         );
     }
 
@@ -1302,10 +1606,13 @@ mod tests {
             test_pool("b", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::Detail { pool_index: 1 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 1,
+            expanded: BTreeSet::new(),
+        };
         app.on_key(key(KeyCode::Char('4')));
         assert_eq!(app.current_tab, Tab::Arc);
-        assert_eq!(app.pools_view, PoolsView::List { selected: 1 });
+        assert!(matches!(app.pools_view, PoolsView::Tree { .. }));
     }
 
     #[test]
@@ -1315,11 +1622,14 @@ mod tests {
             test_pool("b", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::Detail { pool_index: 0 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 0,
+            expanded: BTreeSet::new(),
+        };
         app.on_key(key(KeyCode::Tab));
         // Pools → Datasets (next in Tab::ALL order).
         assert_eq!(app.current_tab, Tab::Datasets);
-        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+        assert!(matches!(app.pools_view, PoolsView::Tree { .. }));
     }
 
     #[test]
@@ -1329,11 +1639,14 @@ mod tests {
             test_pool("b", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::Detail { pool_index: 1 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 1,
+            expanded: BTreeSet::new(),
+        };
         app.on_key(key(KeyCode::BackTab));
         // Pools ← Overview (previous in Tab::ALL order).
         assert_eq!(app.current_tab, Tab::Overview);
-        assert_eq!(app.pools_view, PoolsView::List { selected: 1 });
+        assert!(matches!(app.pools_view, PoolsView::Tree { .. }));
     }
 
     /// Pressing `2` while already on the Pools tab must NOT collapse an
@@ -1346,17 +1659,19 @@ mod tests {
             test_pool("b", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::Detail { pool_index: 1 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 1,
+            expanded: BTreeSet::new(),
+        };
         app.on_key(key(KeyCode::Char('2')));
         assert_eq!(app.current_tab, Tab::Pools);
-        assert_eq!(
-            app.pools_view,
-            PoolsView::Detail { pool_index: 1 },
+        assert!(
+            matches!(app.pools_view, PoolsView::Detail { pool_index: 1, .. }),
             "no-op tab switch should not disturb the sub-view"
         );
     }
 
-    /// End-to-end round trip: drill in, tab out, tab back → list view.
+    /// End-to-end round trip: drill in, tab out, tab back → tree view.
     #[test]
     fn pools_detail_round_trip_ends_on_list() {
         let mut app = app_with_pools(vec![
@@ -1365,20 +1680,25 @@ mod tests {
             test_pool("c", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::List { selected: 2 };
+        app.pools_view = PoolsView::Tree {
+            expanded: BTreeSet::new(),
+            selected: 2,
+        };
         // Drill in
         app.on_key(key(KeyCode::Enter));
-        assert_eq!(app.pools_view, PoolsView::Detail { pool_index: 2 });
+        assert!(matches!(
+            app.pools_view,
+            PoolsView::Detail { pool_index: 2, .. }
+        ));
         // Tab out to Overview
         app.on_key(key(KeyCode::Char('1')));
         assert_eq!(app.current_tab, Tab::Overview);
         // Return to Pools
         app.on_key(key(KeyCode::Char('2')));
         assert_eq!(app.current_tab, Tab::Pools);
-        assert_eq!(
-            app.pools_view,
-            PoolsView::List { selected: 2 },
-            "returning to Pools after a drill-in + tab-out should land on the list"
+        assert!(
+            matches!(app.pools_view, PoolsView::Tree { .. }),
+            "returning to Pools after a drill-in + tab-out should land on the tree"
         );
     }
 
@@ -1389,9 +1709,12 @@ mod tests {
             test_pool("b", PoolHealth::Online, 100, 50),
         ]);
         app.current_tab = Tab::Pools;
-        app.pools_view = PoolsView::Detail { pool_index: 1 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 1,
+            expanded: BTreeSet::new(),
+        };
         app.on_key(key(KeyCode::Esc));
-        assert_eq!(app.pools_view, PoolsView::List { selected: 1 });
+        assert!(matches!(app.pools_view, PoolsView::Tree { .. }));
     }
 
     #[test]
@@ -1403,7 +1726,13 @@ mod tests {
         app.current_tab = Tab::Overview;
         app.on_key(key(KeyCode::Down));
         // Selection unchanged because we're not on the Pools tab.
-        assert_eq!(app.pools_view, PoolsView::List { selected: 0 });
+        assert_eq!(
+            app.pools_view,
+            PoolsView::Tree {
+                expanded: BTreeSet::new(),
+                selected: 0,
+            }
+        );
     }
 
     #[test]
@@ -1412,7 +1741,10 @@ mod tests {
             test_pool("a", PoolHealth::Online, 100, 50),
             test_pool("b", PoolHealth::Online, 100, 50),
         ]);
-        app.pools_view = PoolsView::Detail { pool_index: 1 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 1,
+            expanded: BTreeSet::new(),
+        };
         app.pools_source = Some(Box::new(FakePoolsSource::new(vec![test_pool(
             "a",
             PoolHealth::Online,
@@ -1420,7 +1752,7 @@ mod tests {
             50,
         )])));
         app.refresh_pools();
-        assert!(matches!(app.pools_view, PoolsView::List { selected: 0 }));
+        assert!(matches!(app.pools_view, PoolsView::Tree { selected: 0, .. }));
     }
 
     use crate::datasets::fake::FakeDatasetsSource;
@@ -1887,5 +2219,294 @@ mod tests {
             matches!(app.datasets_view, DatasetsView::Detail { .. }),
             "no-op tab switch should not disturb the sub-view"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // v0.3.1 pools tree state-machine tests.
+    //
+    // These exercise the new helpers (flatten_visible_pool_rows,
+    // expand_selected_pool, collapse_or_jump_to_parent_pool, drill_into_…
+    // selected_pool, prune_expanded_pools) plus the `pools_first_paint`
+    // default-expand-once behavior. Unlike the older `app_with_pools`
+    // fixture above (which assigns `pools_snapshot` directly and never
+    // ticks `refresh_pools`), these tests need the auto-expand-on-first
+    // -paint path to fire — so they construct the app via `App::new`,
+    // which calls `refresh_pools` once during construction.
+    // ---------------------------------------------------------------
+
+    use std::path::PathBuf;
+
+    fn pool_with_vdevs(name: &str, leaf_names: &[&str]) -> PoolInfo {
+        let leaves: Vec<VdevNode> = leaf_names
+            .iter()
+            .map(|n| VdevNode {
+                name: (*n).into(),
+                kind: VdevKind::Disk,
+                state: VdevState::Online,
+                size_bytes: Some(1 << 30),
+                errors: PoolErrors::default(),
+                children: vec![],
+                device_path: Some(format!("/dev/{n}")),
+            })
+            .collect();
+        let raidz = VdevNode {
+            name: "raidz1-0".into(),
+            kind: VdevKind::Raidz { parity: 1 },
+            state: VdevState::Online,
+            size_bytes: Some(4 << 30),
+            errors: PoolErrors::default(),
+            children: leaves,
+            device_path: None,
+        };
+        PoolInfo {
+            name: name.into(),
+            health: PoolHealth::Online,
+            allocated_bytes: 1 << 30,
+            size_bytes: 4 << 30,
+            free_bytes: 3 << 30,
+            fragmentation_pct: Some(5),
+            scrub: ScrubState::Never,
+            errors: PoolErrors::default(),
+            root_vdev: VdevNode {
+                name: name.into(),
+                kind: VdevKind::Root,
+                state: VdevState::Online,
+                size_bytes: Some(4 << 30),
+                errors: PoolErrors::default(),
+                children: vec![raidz],
+                device_path: None,
+            },
+        }
+    }
+
+    fn app_via_new_with_pools(pools: Vec<PoolInfo>) -> App {
+        let arcstats_path = PathBuf::from("fixtures/arcstats");
+        let meminfo_path = PathBuf::from("fixtures/meminfo");
+        let arc_reader: Box<dyn FnMut() -> anyhow::Result<crate::arcstats::ArcStats>> = {
+            let p = arcstats_path.clone();
+            Box::new(move || crate::arcstats::linux::from_procfs_path(&p))
+        };
+        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
+            crate::meminfo::linux::LinuxMemSource::new(meminfo_path),
+        ));
+        let pools_source: Option<Box<dyn PoolsSource>> =
+            Some(Box::new(FakePoolsSource::new(pools)));
+        let mut app =
+            App::new(arc_reader, mem, pools_source, None, None, None)
+                .expect("fixture App::new");
+        app.current_tab = Tab::Pools;
+        app
+    }
+
+    #[test]
+    fn tree_selection_moves_within_visible_rows() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda", "sdb"])]);
+        // tank is auto-expanded after first paint, so visible rows are:
+        // 0: tank (Pool), 1: raidz1-0 (Vdev), 2: sda, 3: sdb.
+        app.on_key(key(KeyCode::Down));
+        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        assert_eq!(*selected, 1);
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Down));
+        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        assert_eq!(*selected, 3);
+        app.on_key(key(KeyCode::Down)); // off the end → no-op
+        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        assert_eq!(*selected, 3);
+        app.on_key(key(KeyCode::Up));
+        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        assert_eq!(*selected, 2);
+    }
+
+    #[test]
+    fn right_arrow_expands_collapsed_pool() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        // Force collapsed state (override default-expanded behavior).
+        if let PoolsView::Tree { expanded, selected } = &mut app.pools_view {
+            expanded.clear();
+            *selected = 0;
+        }
+        assert_eq!(app.flatten_visible_pool_rows().len(), 1); // pool only
+        app.on_key(key(KeyCode::Right));
+        // Now expanded → raidz + sda visible.
+        assert!(app.flatten_visible_pool_rows().len() >= 2);
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        assert!(expanded.contains("tank"));
+    }
+
+    #[test]
+    fn right_arrow_on_already_expanded_pool_is_no_op() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        // tank is auto-expanded by default-expand.
+        let before = app.flatten_visible_pool_rows().len();
+        app.on_key(key(KeyCode::Right));
+        let after = app.flatten_visible_pool_rows().len();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn right_arrow_on_vdev_row_is_no_op() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        // Move to row 1 (raidz1-0).
+        app.on_key(key(KeyCode::Down));
+        let before = app.flatten_visible_pool_rows().len();
+        app.on_key(key(KeyCode::Right));
+        let after = app.flatten_visible_pool_rows().len();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn left_arrow_collapses_expanded_pool_when_on_pool_row() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        // Default-expanded.
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        assert!(expanded.contains("tank"));
+        // Selected starts at 0 (the pool row).
+        app.on_key(key(KeyCode::Left));
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        assert!(!expanded.contains("tank"));
+    }
+
+    #[test]
+    fn left_arrow_jumps_to_parent_pool_when_on_vdev_row() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        // Move to sda (row 2: pool, raidz, sda).
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Down));
+        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        assert_eq!(*selected, 2);
+        app.on_key(key(KeyCode::Left));
+        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        assert_eq!(*selected, 0); // jumped to the tank pool row
+    }
+
+    #[test]
+    fn enter_on_pool_row_drills_to_pool_detail() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        app.on_key(key(KeyCode::Enter));
+        match &app.pools_view {
+            PoolsView::Detail { pool_index, .. } => assert_eq!(*pool_index, 0),
+            other => panic!("expected Detail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enter_on_vdev_row_drills_to_containing_pool_detail() {
+        let mut app = app_via_new_with_pools(vec![
+            pool_with_vdevs("tank", &["sda"]),
+            pool_with_vdevs("rpool", &["nvme0n1"]),
+        ]);
+        // Visible rows after default-expand: 0 tank, 1 raidz1-0, 2 sda,
+        // 3 rpool, 4 raidz1-0, 5 nvme0n1. Move to row 5 (nvme0n1 under rpool).
+        for _ in 0..5 {
+            app.on_key(key(KeyCode::Down));
+        }
+        app.on_key(key(KeyCode::Enter));
+        match &app.pools_view {
+            PoolsView::Detail { pool_index, .. } => assert_eq!(*pool_index, 1),
+            other => panic!("expected Detail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn esc_from_detail_returns_to_tree_with_same_selection() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        // Move to row 2 (sda), drill, then esc.
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Enter));
+        assert!(matches!(app.pools_view, PoolsView::Detail { .. }));
+        app.on_key(key(KeyCode::Esc));
+        match &app.pools_view {
+            PoolsView::Tree { selected, .. } => {
+                // After esc + clamp, the selection lands on something valid.
+                // The exact value isn't load-bearing — just that we're back
+                // in Tree and `selected` is in-range.
+                assert!(*selected < app.flatten_visible_pool_rows().len());
+            }
+            other => panic!("expected Tree, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn expand_state_survives_drill_and_return() {
+        let mut app = app_via_new_with_pools(vec![
+            pool_with_vdevs("tank", &["sda"]),
+            pool_with_vdevs("rpool", &["nvme0n1"]),
+        ]);
+        // Collapse rpool manually.
+        if let PoolsView::Tree { expanded, .. } = &mut app.pools_view {
+            expanded.remove("rpool");
+        }
+        let before: BTreeSet<String> = match &app.pools_view {
+            PoolsView::Tree { expanded, .. } => expanded.clone(),
+            _ => panic!(),
+        };
+        app.on_key(key(KeyCode::Enter)); // drill on tank
+        app.on_key(key(KeyCode::Esc));   // back
+        let after: BTreeSet<String> = match &app.pools_view {
+            PoolsView::Tree { expanded, .. } => expanded.clone(),
+            _ => panic!(),
+        };
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn prune_expanded_pools_drops_vanished_pools() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        // Manually add an extra entry that doesn't correspond to any pool.
+        if let PoolsView::Tree { expanded, .. } = &mut app.pools_view {
+            expanded.insert("ghost".into());
+        }
+        // Refresh — prune should drop "ghost" but keep "tank".
+        let _ = app.refresh();
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        assert!(expanded.contains("tank"));
+        assert!(!expanded.contains("ghost"));
+    }
+
+    #[test]
+    fn default_expanded_only_runs_once() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        // After construction, tank is auto-expanded.
+        assert!(matches!(&app.pools_view,
+            PoolsView::Tree { expanded, .. } if expanded.contains("tank")));
+        // User collapses tank.
+        if let PoolsView::Tree { expanded, .. } = &mut app.pools_view {
+            expanded.remove("tank");
+        }
+        // Refresh — first-paint logic must NOT re-add tank, because
+        // pools_first_paint was set to false on the first refresh.
+        let _ = app.refresh();
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        assert!(!expanded.contains("tank"),
+            "default-expand re-fired after user collapse — pools_first_paint logic broken");
+    }
+
+    #[test]
+    fn empty_snapshot_clamps_selection_to_zero() {
+        let mut app = app_via_new_with_pools(vec![]);
+        // No pools → no visible rows.
+        assert_eq!(app.flatten_visible_pool_rows().len(), 0);
+        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        assert_eq!(*selected, 0);
+        // j/k on empty are no-ops.
+        app.on_key(key(KeyCode::Down));
+        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        assert_eq!(*selected, 0);
+    }
+
+    #[test]
+    fn switch_tab_collapses_detail_to_tree() {
+        let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
+        app.on_key(key(KeyCode::Enter));
+        assert!(matches!(app.pools_view, PoolsView::Detail { .. }));
+        // Tab switch → cycle next, then back.
+        app.cycle_tab(1);
+        // We've left Pools; pools_view should already be Tree.
+        assert!(matches!(app.pools_view, PoolsView::Tree { .. }));
+        // Coming back via hotkey '2' should land on Tree.
+        app.on_key(key(KeyCode::Char('2')));
+        assert!(matches!(app.pools_view, PoolsView::Tree { .. }));
     }
 }

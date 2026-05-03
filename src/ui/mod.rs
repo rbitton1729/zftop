@@ -33,8 +33,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     match app.current_tab {
         Tab::Arc => arc_view::draw(frame, content_area, app),
         Tab::Overview => overview::draw(frame, content_area, app),
-        Tab::Pools => match app.pools_view {
-            PoolsView::List { .. } => pools_list::draw(frame, content_area, app),
+        Tab::Pools => match &app.pools_view {
+            PoolsView::Tree { .. } => pools_list::draw(frame, content_area, app),
             PoolsView::Detail { .. } => pools_detail::draw(frame, content_area, app),
         },
         Tab::Datasets => match &app.datasets_view {
@@ -121,13 +121,15 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("r", Style::default().fg(Color::Yellow)),
             Span::raw(": refresh"),
         ]),
-        (Tab::Pools, PoolsView::List { .. }, _) => Line::from(vec![
+        (Tab::Pools, PoolsView::Tree { .. }, _) => Line::from(vec![
             Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(": quit  "),
             Span::styled("1/2/3/4", Style::default().fg(Color::Yellow)),
             Span::raw(": tabs  "),
             Span::styled("↑↓", Style::default().fg(Color::Yellow)),
             Span::raw(": select  "),
+            Span::styled("←→", Style::default().fg(Color::Yellow)),
+            Span::raw(": collapse/expand  "),
             Span::styled("enter", Style::default().fg(Color::Yellow)),
             Span::raw(": details  "),
             Span::styled("r", Style::default().fg(Color::Yellow)),
@@ -260,11 +262,11 @@ mod tests {
     }
 
     #[test]
-    fn footer_on_pools_list_shows_selection_keys() {
+    fn footer_on_pools_tree_shows_collapse_expand_keys() {
         let app = app_from_fixtures_on_tab(Tab::Pools);
         let terminal = draw_and_collect(&app, 80, 24);
         let last = row_text(terminal.backend(), 23);
-        assert!(last.contains("select"), "footer = {last:?}");
+        assert!(last.contains("collapse/expand"), "footer = {last:?}");
         assert!(last.contains("enter"), "footer = {last:?}");
         assert!(last.contains("details"), "footer = {last:?}");
     }
@@ -272,8 +274,12 @@ mod tests {
     #[test]
     fn footer_on_pools_detail_shows_esc_back() {
         use crate::app::PoolsView;
+        use std::collections::BTreeSet;
         let mut app = app_from_fixtures_on_tab(Tab::Pools);
-        app.pools_view = PoolsView::Detail { pool_index: 0 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 0,
+            expanded: BTreeSet::new(),
+        };
         let terminal = draw_and_collect(&app, 80, 24);
         let last = row_text(terminal.backend(), 23);
         assert!(last.contains("esc"), "footer = {last:?}");
