@@ -377,9 +377,12 @@ impl App {
     /// Switch to a different top-level tab. Leaving the Pools tab while
     /// drilled into a specific pool collapses the drilldown back to the
     /// list view (keeping the selection on the same pool), so returning
-    /// to Pools later lands on the list — not on a stale detail view. A
-    /// no-op switch (e.g. pressing `2` while already on Pools) preserves
-    /// whatever sub-view the user is currently in.
+    /// to Pools later lands on the list — not on a stale detail view.
+    /// Similarly, leaving the Datasets tab while in a detail view collapses
+    /// back to the tree view, preserving the expansion state and landing on
+    /// the same dataset row if it still exists. A no-op switch (e.g. pressing
+    /// `2` while already on Pools) preserves whatever sub-view the user is
+    /// currently in.
     fn switch_tab(&mut self, target: Tab) {
         if target == self.current_tab {
             return;
@@ -389,6 +392,22 @@ impl App {
                 self.pools_view = PoolsView::List {
                     selected: pool_index,
                 };
+            }
+        }
+        if self.current_tab == Tab::Datasets {
+            if let DatasetsView::Detail { name, expanded } = &self.datasets_view {
+                let prev_name = name.clone();
+                let restored_expanded = expanded.clone();
+                self.datasets_view = DatasetsView::Tree {
+                    expanded: restored_expanded,
+                    selected: 0,
+                };
+                let rows = self.flatten_visible_dataset_rows();
+                if let Some(idx) = rows.iter().position(|(_, n)| n.name == prev_name) {
+                    if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
+                        *selected = idx;
+                    }
+                }
             }
         }
         self.current_tab = target;
@@ -472,6 +491,8 @@ impl App {
         // Per-tab bindings.
         if self.current_tab == Tab::Pools {
             self.on_key_pools(key);
+        } else if self.current_tab == Tab::Datasets {
+            self.on_key_datasets(key);
         }
     }
 
@@ -493,6 +514,16 @@ impl App {
                     return;
                 }
                 let last = self.pools_snapshot.len() - 1;
+                let new = (*selected as i32 + delta).clamp(0, last as i32) as usize;
+                *selected = new;
+            }
+        } else if self.current_tab == Tab::Datasets {
+            let visible_count = self.flatten_visible_dataset_rows().len();
+            if visible_count == 0 {
+                return;
+            }
+            if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
+                let last = visible_count - 1;
                 let new = (*selected as i32 + delta).clamp(0, last as i32) as usize;
                 *selected = new;
             }
@@ -537,6 +568,146 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn on_key_datasets(&mut self, key: KeyEvent) {
+        // Detail-view bindings first. Capture the values we need BEFORE
+        // mutating self.datasets_view (the Esc handler computes a new
+        // selection from the previous detail name after the transition).
+        if let DatasetsView::Detail { name, expanded } = &self.datasets_view {
+            match key.code {
+                KeyCode::Esc | KeyCode::Backspace => {
+                    let restored_expanded = expanded.clone();
+                    let prev_name = name.clone();
+                    self.datasets_view = DatasetsView::Tree {
+                        expanded: restored_expanded,
+                        selected: 0,
+                    };
+                    let rows = self.flatten_visible_dataset_rows();
+                    if let Some(idx) = rows.iter().position(|(_, n)| n.name == prev_name) {
+                        if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
+                            *selected = idx;
+                        }
+                    }
+                    return;
+                }
+                _ => return, // detail view ignores other keys
+            }
+        }
+
+        // Tree-view bindings.
+        let visible_count = self.flatten_visible_dataset_rows().len();
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
+                    if *selected + 1 < visible_count {
+                        *selected += 1;
+                    }
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
+                    if *selected > 0 {
+                        *selected -= 1;
+                    }
+                }
+            }
+            KeyCode::Home => {
+                if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
+                    *selected = 0;
+                }
+            }
+            KeyCode::End => {
+                if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
+                    *selected = visible_count.saturating_sub(1);
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.expand_selected_dataset();
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.collapse_or_jump_to_parent();
+            }
+            KeyCode::Enter => {
+                self.drill_into_selected_dataset();
+            }
+            _ => {}
+        }
+    }
+
+    /// Insert the currently-selected DatasetNode's name into `expanded` if
+    /// it has children. No-op for leaves and zvols.
+    fn expand_selected_dataset(&mut self) {
+        // Collect what we need before taking a mutable borrow.
+        let (selected_idx, name, has_children) = {
+            let rows = self.flatten_visible_dataset_rows();
+            let DatasetsView::Tree { selected, .. } = &self.datasets_view else {
+                return;
+            };
+            let Some((_, node)) = rows.get(*selected) else {
+                return;
+            };
+            (*selected, node.name.clone(), node.has_children())
+        };
+        let _ = selected_idx;
+        if has_children {
+            if let DatasetsView::Tree { expanded, .. } = &mut self.datasets_view {
+                expanded.insert(name);
+            }
+        }
+    }
+
+    /// If the selected row is expanded, collapse it. Otherwise (collapsed
+    /// or leaf), jump selection to the parent row. Pool roots have no
+    /// parent — no-op.
+    fn collapse_or_jump_to_parent(&mut self) {
+        // Collect the information we need before taking a mutable borrow.
+        let (selected_idx, depth, name, has_children, depths_before) = {
+            let rows = self.flatten_visible_dataset_rows();
+            let DatasetsView::Tree { selected, .. } = &self.datasets_view else {
+                return;
+            };
+            let Some((depth, node)) = rows.get(*selected).map(|(d, n)| (*d, *n)) else {
+                return;
+            };
+            let depths_before: Vec<usize> = rows[..*selected].iter().map(|(d, _)| *d).collect();
+            (*selected, depth, node.name.clone(), node.has_children(), depths_before)
+        };
+        if let DatasetsView::Tree { selected, expanded } = &mut self.datasets_view {
+            if expanded.contains(&name) && has_children {
+                expanded.remove(&name);
+                return;
+            }
+            if depth == 0 {
+                return; // pool root, no parent
+            }
+            let target_depth = depth - 1;
+            for i in (0..selected_idx).rev() {
+                if depths_before[i] == target_depth {
+                    *selected = i;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Drop into Detail for the currently-selected dataset. No-op when
+    /// in Detail already or when the snapshot is empty.
+    fn drill_into_selected_dataset(&mut self) {
+        let rows = self.flatten_visible_dataset_rows();
+        let selected_idx = match &self.datasets_view {
+            DatasetsView::Tree { selected, .. } => *selected,
+            DatasetsView::Detail { .. } => return,
+        };
+        let Some((_, node)) = rows.get(selected_idx) else {
+            return;
+        };
+        let name = node.name.clone();
+        let expanded = match &self.datasets_view {
+            DatasetsView::Tree { expanded, .. } => expanded.clone(),
+            DatasetsView::Detail { .. } => unreachable!(),
+        };
+        self.datasets_view = DatasetsView::Detail { name, expanded };
     }
 
     pub fn hit_ratio_overall(&self) -> f64 {
@@ -1489,5 +1660,231 @@ mod tests {
             a
         };
         assert_eq!(app.flatten_visible_dataset_rows().len(), 0);
+    }
+
+    #[test]
+    fn datasets_down_advances_selection() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![]), ds_fs("tank/srv", vec![])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        // After app_with_datasets, expanded contains "tank" so visible rows
+        // are: tank, tank/home, tank/srv. Selection starts at 0.
+        app.on_key(key(KeyCode::Down));
+        if let DatasetsView::Tree { selected, .. } = &app.datasets_view {
+            assert_eq!(*selected, 1);
+        } else {
+            panic!("expected Tree view");
+        }
+    }
+
+    #[test]
+    fn datasets_down_clamps_at_last() {
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![])]);
+        app.current_tab = Tab::Datasets;
+        app.on_key(key(KeyCode::Down));
+        if let DatasetsView::Tree { selected, .. } = &app.datasets_view {
+            assert_eq!(*selected, 0);
+        } else {
+            panic!("expected Tree view");
+        }
+    }
+
+    #[test]
+    fn datasets_right_expands_selected_node() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![ds_fs("tank/home/alice", vec![])])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        if let DatasetsView::Tree { selected, .. } = &mut app.datasets_view {
+            *selected = 1; // tank/home
+        }
+        app.on_key(key(KeyCode::Right));
+        if let DatasetsView::Tree { expanded, .. } = &app.datasets_view {
+            assert!(expanded.contains("tank/home"));
+        } else {
+            panic!("expected Tree view");
+        }
+    }
+
+    #[test]
+    fn datasets_right_on_leaf_is_noop() {
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![])]);
+        app.current_tab = Tab::Datasets;
+        let before = app.datasets_view.clone();
+        app.on_key(key(KeyCode::Right));
+        assert_eq!(app.datasets_view, before);
+    }
+
+    #[test]
+    fn datasets_left_collapses_expanded_node() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        app.on_key(key(KeyCode::Left));
+        if let DatasetsView::Tree { expanded, .. } = &app.datasets_view {
+            assert!(!expanded.contains("tank"));
+        } else {
+            panic!("expected Tree view");
+        }
+    }
+
+    #[test]
+    fn datasets_left_on_collapsed_jumps_to_parent() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![ds_fs("tank/home/alice", vec![])])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        if let DatasetsView::Tree { selected, .. } = &mut app.datasets_view {
+            *selected = 1;
+        }
+        app.on_key(key(KeyCode::Left));
+        if let DatasetsView::Tree { selected, .. } = &app.datasets_view {
+            assert_eq!(*selected, 0);
+        } else {
+            panic!("expected Tree view");
+        }
+    }
+
+    #[test]
+    fn datasets_left_on_pool_root_is_noop() {
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![])]);
+        app.current_tab = Tab::Datasets;
+        if let DatasetsView::Tree { expanded, .. } = &mut app.datasets_view {
+            expanded.clear();
+        }
+        let before = app.datasets_view.clone();
+        app.on_key(key(KeyCode::Left));
+        assert_eq!(app.datasets_view, before);
+    }
+
+    #[test]
+    fn datasets_enter_drills_into_detail() {
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![])]);
+        app.current_tab = Tab::Datasets;
+        app.on_key(key(KeyCode::Enter));
+        if let DatasetsView::Detail { name, .. } = &app.datasets_view {
+            assert_eq!(name, "tank");
+        } else {
+            panic!("expected Detail view");
+        }
+    }
+
+    #[test]
+    fn datasets_esc_returns_to_tree_with_same_selection() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        let mut expanded = BTreeSet::new();
+        expanded.insert("tank".to_string());
+        app.datasets_view = DatasetsView::Detail {
+            name: "tank/home".into(),
+            expanded,
+        };
+        app.on_key(key(KeyCode::Esc));
+        if let DatasetsView::Tree { selected, expanded } = &app.datasets_view {
+            assert!(expanded.contains("tank"));
+            assert_eq!(*selected, 1);
+        } else {
+            panic!("expected Tree view");
+        }
+    }
+
+    #[test]
+    fn datasets_keys_ignored_when_not_on_datasets_tab() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![])],
+        )]);
+        app.current_tab = Tab::Pools;
+        let before = app.datasets_view.clone();
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.datasets_view, before);
+    }
+
+    #[test]
+    fn datasets_mouse_scroll_moves_selection() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        use crossterm::event::{MouseEvent, MouseEventKind};
+        let scroll_down = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.on_mouse(scroll_down);
+        if let DatasetsView::Tree { selected, .. } = &app.datasets_view {
+            assert_eq!(*selected, 1);
+        } else {
+            panic!("expected Tree view");
+        }
+    }
+
+    #[test]
+    fn leaving_datasets_while_in_detail_collapses_to_tree_via_overview_key() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        let mut expanded = BTreeSet::new();
+        expanded.insert("tank".to_string());
+        app.datasets_view = DatasetsView::Detail {
+            name: "tank/home".into(),
+            expanded,
+        };
+        app.on_key(key(KeyCode::Char('1')));
+        assert_eq!(app.current_tab, Tab::Overview);
+        assert!(matches!(app.datasets_view, DatasetsView::Tree { .. }));
+    }
+
+    #[test]
+    fn leaving_datasets_while_in_detail_collapses_to_tree_via_arc_key() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        let mut expanded = BTreeSet::new();
+        expanded.insert("tank".to_string());
+        app.datasets_view = DatasetsView::Detail {
+            name: "tank/home".into(),
+            expanded,
+        };
+        app.on_key(key(KeyCode::Char('4')));
+        assert_eq!(app.current_tab, Tab::Arc);
+        assert!(matches!(app.datasets_view, DatasetsView::Tree { .. }));
+    }
+
+    #[test]
+    fn pressing_datasets_key_while_already_on_datasets_preserves_detail() {
+        let mut app = app_with_datasets(vec![ds_fs(
+            "tank",
+            vec![ds_fs("tank/home", vec![])],
+        )]);
+        app.current_tab = Tab::Datasets;
+        let mut expanded = BTreeSet::new();
+        expanded.insert("tank".to_string());
+        app.datasets_view = DatasetsView::Detail {
+            name: "tank/home".into(),
+            expanded,
+        };
+        app.on_key(key(KeyCode::Char('3')));
+        assert_eq!(app.current_tab, Tab::Datasets);
+        assert!(
+            matches!(app.datasets_view, DatasetsView::Detail { .. }),
+            "no-op tab switch should not disturb the sub-view"
+        );
     }
 }

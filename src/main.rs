@@ -25,6 +25,7 @@ use ratatui::Terminal;
 
 use app::App;
 use arcstats::ArcStats;
+use datasets::DatasetsSource;
 use meminfo::MemSource;
 use pools::PoolsSource;
 
@@ -32,16 +33,22 @@ const DEFAULT_SOURCE: &str = "/proc/spl/kstat/zfs/arcstats";
 
 fn main() -> Result<()> {
     let (source, meminfo_source, interval) = parse_args();
-    let (arc_reader, mem_source, pools_source, pools_init_error) =
-        build_sources(source.clone(), meminfo_source);
+    let (
+        arc_reader,
+        mem_source,
+        pools_source,
+        pools_init_error,
+        datasets_source,
+        datasets_init_error,
+    ) = build_sources(source.clone(), meminfo_source);
 
     let mut app = match App::new(
         arc_reader,
         mem_source,
         pools_source,
         pools_init_error,
-        None, // datasets source — Task 14 wires the real one
-        None, // datasets init error
+        datasets_source,
+        datasets_init_error,
     ) {
         Ok(app) => app,
         Err(e) if is_default_source(&source) => {
@@ -117,6 +124,8 @@ type BuildSourcesResult = (
     Option<Box<dyn MemSource>>,
     Option<Box<dyn PoolsSource>>,
     Option<String>,
+    Option<Box<dyn DatasetsSource>>,
+    Option<String>,
 );
 
 #[cfg(target_os = "linux")]
@@ -127,7 +136,8 @@ fn build_sources(source: PathBuf, meminfo_source: Option<PathBuf>) -> BuildSourc
     let mem: Option<Box<dyn MemSource>> =
         Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
     let (pools, pools_init_error) = build_pools_source();
-    (arc_reader, mem, pools, pools_init_error)
+    let (datasets, datasets_init_error) = build_datasets_source();
+    (arc_reader, mem, pools, pools_init_error, datasets, datasets_init_error)
 }
 
 #[cfg(target_os = "freebsd")]
@@ -141,14 +151,26 @@ fn build_sources(source: PathBuf, meminfo_source: Option<PathBuf>) -> BuildSourc
         .ok()
         .map(|s| Box::new(s) as Box<dyn MemSource>);
     let (pools, pools_init_error) = build_pools_source();
-    (arc_reader, mem, pools, pools_init_error)
+    let (datasets, datasets_init_error) = build_datasets_source();
+    (arc_reader, mem, pools, pools_init_error, datasets, datasets_init_error)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn build_sources(_source: PathBuf, _meminfo_source: Option<PathBuf>) -> BuildSourcesResult {
     let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
         Box::new(|| Err(anyhow::anyhow!("zftop only supports Linux and FreeBSD")));
-    (arc_reader, None, None, None)
+    (arc_reader, None, None, None, None, None)
+}
+
+/// Attempt to construct a `LibzfsDatasetsSource`. On failure (libzfs init
+/// unavailable), returns `(None, Some(error))` so `App` can render gracefully
+/// without datasets support.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn build_datasets_source() -> (Option<Box<dyn DatasetsSource>>, Option<String>) {
+    match datasets::libzfs::LibzfsDatasetsSource::new() {
+        Ok(src) => (Some(Box::new(src) as Box<dyn DatasetsSource>), None),
+        Err(e) => (None, Some(e.to_string())),
+    }
 }
 
 /// Attempt to construct a `LibzfsPoolsSource`. On failure (`libzfs_init`
@@ -264,7 +286,7 @@ fn print_help() {
     println!("CONTROLS:");
     println!("    q, Ctrl+C               Quit");
     println!("    r                       Force refresh");
-    println!("    1, 2, 3                 Switch tab (Overview / Pools / ARC)");
+    println!("    1, 2, 3, 4              Switch tab (Overview / Pools / Datasets / ARC)");
     println!("    Tab, Shift+Tab          Cycle tabs forward / back");
     println!("    (Pools list)");
     println!("        ↑/↓, j/k            Select pool");
@@ -272,6 +294,14 @@ fn print_help() {
     println!("        Enter               Drill into pool detail");
     println!("    (Pools detail)");
     println!("        Esc, Backspace      Return to list");
+    println!("    (Datasets tree)");
+    println!("        ↑/↓, j/k            Select row");
+    println!("        Home, End           Jump to first / last visible");
+    println!("        →/l                 Expand selected node");
+    println!("        ←/h                 Collapse selected node, or jump to parent");
+    println!("        Enter               Drill into dataset detail");
+    println!("    (Datasets detail)");
+    println!("        Esc, Backspace      Return to tree");
     println!();
     println!("On FreeBSD, --source and --meminfo are ignored; data is read via sysctl.");
     println!();

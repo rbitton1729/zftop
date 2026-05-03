@@ -61,6 +61,60 @@ pub struct nvlist_t {
     _private: [u8; 0],
 }
 
+#[repr(C)]
+pub struct zfs_handle_t {
+    _private: [u8; 0],
+}
+
+// ---------------------------------------------------------------------------
+// zfs_type_t — bitmask for filtering datasets by type. From sys/fs/zfs.h:
+//     ZFS_TYPE_FILESYSTEM = 1 << 0,
+//     ZFS_TYPE_SNAPSHOT   = 1 << 1,
+//     ZFS_TYPE_VOLUME     = 1 << 2,
+//     ZFS_TYPE_POOL       = 1 << 3,
+//     ZFS_TYPE_BOOKMARK   = 1 << 4,
+//     ZFS_TYPE_VDEV       = 1 << 5,
+// We use FILESYSTEM | VOLUME for the dataset walker.
+// ---------------------------------------------------------------------------
+
+pub const ZFS_TYPE_FILESYSTEM: c_int = 1 << 0;
+pub const ZFS_TYPE_VOLUME: c_int = 1 << 2;
+
+// ---------------------------------------------------------------------------
+// zfs_prop_t — dataset property ids
+//
+// Values are positional integers in the `zfs_prop_t` enum in
+// sys/fs/zfs.h. Verified against /usr/include/libzfs/sys/fs/zfs.h.
+// The enum is appended-only across OpenZFS versions, so these prefix
+// values are stable from ~OpenZFS 0.7 onward.
+// ---------------------------------------------------------------------------
+
+pub const ZFS_PROP_TYPE: c_int = 0;
+pub const ZFS_PROP_CREATION: c_int = 1;
+pub const ZFS_PROP_USED: c_int = 2;
+pub const ZFS_PROP_AVAILABLE: c_int = 3;
+pub const ZFS_PROP_REFERENCED: c_int = 4;
+pub const ZFS_PROP_COMPRESSRATIO: c_int = 5;
+pub const ZFS_PROP_QUOTA: c_int = 8;
+pub const ZFS_PROP_RESERVATION: c_int = 9;
+pub const ZFS_PROP_VOLBLOCKSIZE: c_int = 11;
+pub const ZFS_PROP_RECORDSIZE: c_int = 12;
+pub const ZFS_PROP_MOUNTPOINT: c_int = 13;
+pub const ZFS_PROP_COMPRESSION: c_int = 16;
+pub const ZFS_PROP_ATIME: c_int = 17;
+pub const ZFS_PROP_SNAPDIR: c_int = 23;
+pub const ZFS_PROP_COPIES: c_int = 32;
+pub const ZFS_PROP_REFQUOTA: c_int = 40;
+pub const ZFS_PROP_REFRESERVATION: c_int = 41;
+pub const ZFS_PROP_DEDUP: c_int = 56;
+pub const ZFS_PROP_SYNC: c_int = 58;
+pub const ZFS_PROP_ENCRYPTION: c_int = 82;
+
+// Property source flags (zprop_source_t). NONE+DEFAULT == "absent"
+// for UI purposes; LOCAL/INHERITED/RECEIVED == "set".
+pub const ZPROP_SRC_NONE: c_int = 0x1;
+pub const ZPROP_SRC_DEFAULT: c_int = 0x2;
+
 // ---------------------------------------------------------------------------
 // zpool_prop_t — pool property ids
 //
@@ -357,6 +411,46 @@ pub type ZpoolGetPropIntFn =
     unsafe extern "C" fn(*mut zpool_handle_t, c_int, *mut c_int) -> u64;
 pub type ZpoolCloseFn = unsafe extern "C" fn(*mut zpool_handle_t);
 
+// The C typedef is `zfs_iter_f` — same shape as `zpool_iter_f` but takes
+// a `zfs_handle_t*`.
+#[allow(non_camel_case_types)]
+pub type zfs_iter_f = unsafe extern "C" fn(
+    zhp: *mut zfs_handle_t,
+    data: *mut c_void,
+) -> c_int;
+
+pub type ZfsOpenFn = unsafe extern "C" fn(
+    handle: *mut libzfs_handle_t,
+    name: *const c_char,
+    types: c_int,
+) -> *mut zfs_handle_t;
+pub type ZfsCloseFn = unsafe extern "C" fn(*mut zfs_handle_t);
+pub type ZfsGetNameFn = unsafe extern "C" fn(*mut zfs_handle_t) -> *const c_char;
+pub type ZfsGetTypeFn = unsafe extern "C" fn(*mut zfs_handle_t) -> c_int;
+pub type ZfsIterFilesystemsFn = unsafe extern "C" fn(
+    handle: *mut zfs_handle_t,
+    func: zfs_iter_f,
+    data: *mut c_void,
+) -> c_int;
+/// `zfs_prop_get_int(handle, prop) -> u64`. Used for size / count
+/// properties. Returns 0 if the property is unset/inherited.
+pub type ZfsPropGetIntFn =
+    unsafe extern "C" fn(*mut zfs_handle_t, c_int) -> u64;
+/// `zfs_prop_get(handle, prop, propbuf, proplen, src, statbuf,
+/// statlen, literal)`. Used for string properties. Returns 0 on
+/// success, non-zero on failure. `src` (out) receives the property
+/// source flag.
+pub type ZfsPropGetFn = unsafe extern "C" fn(
+    handle: *mut zfs_handle_t,
+    prop: c_int,
+    propbuf: *mut c_char,
+    proplen: usize,
+    src: *mut c_int,
+    statbuf: *mut c_char,
+    statlen: usize,
+    literal: c_int,
+) -> c_int;
+
 pub type NvlistLookupStringFn = unsafe extern "C" fn(
     nvl: *const nvlist_t,
     name: *const c_char,
@@ -407,6 +501,15 @@ pub struct Libzfs {
     pub zpool_get_config: ZpoolGetConfigFn,
     pub zpool_get_prop_int: ZpoolGetPropIntFn,
     pub zpool_close: ZpoolCloseFn,
+
+    // libzfs dataset symbols (NEW for v0.3)
+    pub zfs_open: ZfsOpenFn,
+    pub zfs_close: ZfsCloseFn,
+    pub zfs_get_name: ZfsGetNameFn,
+    pub zfs_get_type: ZfsGetTypeFn,
+    pub zfs_iter_filesystems: ZfsIterFilesystemsFn,
+    pub zfs_prop_get_int: ZfsPropGetIntFn,
+    pub zfs_prop_get: ZfsPropGetFn,
 
     // libnvpair symbols
     pub nvlist_lookup_string: NvlistLookupStringFn,
@@ -486,6 +589,21 @@ impl Libzfs {
             let zpool_close: ZpoolCloseFn =
                 std::mem::transmute(dlsym_required(zfs_handle, c"zpool_close")?);
 
+            let zfs_open: ZfsOpenFn =
+                std::mem::transmute(dlsym_required(zfs_handle, c"zfs_open")?);
+            let zfs_close: ZfsCloseFn =
+                std::mem::transmute(dlsym_required(zfs_handle, c"zfs_close")?);
+            let zfs_get_name: ZfsGetNameFn =
+                std::mem::transmute(dlsym_required(zfs_handle, c"zfs_get_name")?);
+            let zfs_get_type: ZfsGetTypeFn =
+                std::mem::transmute(dlsym_required(zfs_handle, c"zfs_get_type")?);
+            let zfs_iter_filesystems: ZfsIterFilesystemsFn =
+                std::mem::transmute(dlsym_required(zfs_handle, c"zfs_iter_filesystems")?);
+            let zfs_prop_get_int: ZfsPropGetIntFn =
+                std::mem::transmute(dlsym_required(zfs_handle, c"zfs_prop_get_int")?);
+            let zfs_prop_get: ZfsPropGetFn =
+                std::mem::transmute(dlsym_required(zfs_handle, c"zfs_prop_get")?);
+
             let nvlist_lookup_string: NvlistLookupStringFn =
                 std::mem::transmute(dlsym_required(nvpair_handle, c"nvlist_lookup_string")?);
             let nvlist_lookup_uint64: NvlistLookupUint64Fn =
@@ -511,6 +629,13 @@ impl Libzfs {
                 zpool_get_config,
                 zpool_get_prop_int,
                 zpool_close,
+                zfs_open,
+                zfs_close,
+                zfs_get_name,
+                zfs_get_type,
+                zfs_iter_filesystems,
+                zfs_prop_get_int,
+                zfs_prop_get,
                 nvlist_lookup_string,
                 nvlist_lookup_uint64,
                 nvlist_lookup_nvlist,

@@ -13,7 +13,7 @@ pub mod types;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub mod libzfs;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-mod ffi;
+pub(crate) mod ffi;
 
 #[cfg(test)]
 pub mod fake;

@@ -2,7 +2,7 @@
 //! bar on Overview + ARC, the ARC gauge on Overview + ARC, pool-health
 //! coloring on Overview + Pools list + Pools detail — lives here.
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
@@ -126,4 +126,23 @@ pub(super) fn pool_health_style(health: PoolHealth) -> Style {
         }
         PoolHealth::Offline => Style::default().fg(Color::DarkGray),
     }
+}
+
+/// Render a single line of `text` horizontally centered in the middle
+/// of `area`. No-op when `area` has zero height or width. Used by
+/// list/tree views for empty-state and error notices.
+pub(super) fn draw_centered(frame: &mut Frame, area: Rect, text: &str, style: Style) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let mid_y = area.y + area.height / 2;
+    let row = Rect {
+        x: area.x,
+        y: mid_y,
+        width: area.width,
+        height: 1,
+    };
+    let p = Paragraph::new(Line::from(Span::styled(text.to_string(), style)))
+        .alignment(Alignment::Center);
+    frame.render_widget(p, row);
 }

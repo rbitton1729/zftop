@@ -45,17 +45,19 @@ zftop --help             # all options
 |-----|--------|
 | `q` / `Ctrl+C` | quit |
 | `r` | force refresh |
-| `1` `2` `3` | Overview / Pools / ARC |
+| `1` `2` `3` `4` | Overview / Pools / Datasets / ARC |
 | `Tab` / `Shift+Tab` | cycle tabs |
-| `↑↓` / `jk` | select pool |
-| `Enter` | pool detail |
-| `Esc` | back to list |
+| `↑↓` / `jk` | select row |
+| `←→` / `hl` | (Datasets) collapse / expand |
+| `Enter` | drill into detail |
+| `Esc` | back to list / tree |
 
 ## Requirements
 
 - **Linux** with OpenZFS loaded, or **FreeBSD 14+**
 - `libzfs` at runtime (comes with ZFS)
 - Prebuilt binaries need glibc 2.28+ (Debian 10, Ubuntu 18.04, RHEL 8, Arch, etc). Older or musl systems: use `cargo install zftop`
+- A Unicode-capable terminal for the dataset tree glyphs (▼/▶). Standard terminal emulators all qualify; bare Linux text consoles (`tty1`) may render the glyphs as `?`.
 
 ## How the RAM bar works
 
@@ -84,7 +86,7 @@ zftop is a finishable project (or at least everything up until fleet mode, which
 
 - **v0.1** ARC dashboard ✓
 - **v0.2** Pools: capacity, health, vdev trees, scrub status ✓
-- **v0.3** Datasets: usage, compression, sorting/filtering
+- **v0.3** Datasets: tree view, properties, quota usage ✓
 - **v0.4** Snapshots, with Sanoid retention awareness
 - **v0.5** SMART health joined to vdev members
 - **v1.0** Remote/fleet mode over SSH
