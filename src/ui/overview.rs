@@ -255,7 +255,8 @@ mod tests {
             meminfo::linux::LinuxMemSource::new(meminfo_path),
         ));
         let mut app =
-            App::new(arc_reader, mem, pools_source, pools_init_error).expect("fixture App::new");
+            App::new(arc_reader, mem, pools_source, pools_init_error, None, None)
+                .expect("fixture App::new");
         app.current_tab = Tab::Overview;
         app.pools_snapshot = pools;
         app

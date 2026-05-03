@@ -431,7 +431,8 @@ mod tests {
         let pools = vec![pool];
         let pools_source: Option<Box<dyn crate::pools::PoolsSource>> =
             Some(Box::new(FakePoolsSource::new(pools.clone())));
-        let mut app = App::new(arc_reader, mem, pools_source, None).expect("fixture App::new");
+        let mut app =
+            App::new(arc_reader, mem, pools_source, None, None, None).expect("fixture App::new");
         app.current_tab = Tab::Pools;
         app.pools_snapshot = pools;
         app.pools_view = PoolsView::Detail { pool_index: 0 };

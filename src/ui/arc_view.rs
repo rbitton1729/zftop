@@ -255,7 +255,7 @@ mod tests {
         let mem: Option<Box<dyn MemSource>> = Some(Box::new(
             meminfo::linux::LinuxMemSource::new(meminfo_path),
         ));
-        App::new(arc_reader, mem, None, None).expect("fixture App::new")
+        App::new(arc_reader, mem, None, None, None, None).expect("fixture App::new")
     }
 
     #[test]

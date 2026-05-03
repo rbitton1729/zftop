@@ -150,7 +150,7 @@ mod tests {
         let mem: Option<Box<dyn MemSource>> = Some(Box::new(
             meminfo::linux::LinuxMemSource::new(meminfo_path),
         ));
-        let mut app = App::new(arc_reader, mem, None, None).expect("fixture App::new");
+        let mut app = App::new(arc_reader, mem, None, None, None, None).expect("fixture App::new");
         app.current_tab = tab;
         app
     }

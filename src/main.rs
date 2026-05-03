@@ -35,7 +35,14 @@ fn main() -> Result<()> {
     let (arc_reader, mem_source, pools_source, pools_init_error) =
         build_sources(source.clone(), meminfo_source);
 
-    let mut app = match App::new(arc_reader, mem_source, pools_source, pools_init_error) {
+    let mut app = match App::new(
+        arc_reader,
+        mem_source,
+        pools_source,
+        pools_init_error,
+        None, // datasets source — Task 14 wires the real one
+        None, // datasets init error
+    ) {
         Ok(app) => app,
         Err(e) if is_default_source(&source) => {
             eprintln!("zftop: ZFS is not found on this system");
