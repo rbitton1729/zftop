@@ -4,8 +4,8 @@
 //!
 //! Module layout:
 //! - `types`   — `PoolInfo`, `VdevNode`, `ScrubState`, etc. Zero libzfs dep.
-//! - `ffi`     — `extern "C"` signatures for libzfs (Task 6).
-//! - `libzfs`  — `LibzfsPoolsSource` calling `ffi` and building `types` (Task 7).
+//! - `ffi`     — `extern "C"` signatures for libzfs.
+//! - `libzfs`  — `LibzfsPoolsSource` calling `ffi` and building `types`.
 //! - `fake`    — test-only `FakePoolsSource` used by unit tests.
 
 pub mod types;
@@ -18,9 +18,8 @@ pub mod libzfs;
 #[cfg(test)]
 pub mod fake;
 
-// Some of these re-exports are only reached by `#[cfg(test)]` code in
-// sibling modules right now (tests construct VdevNode etc. via the
-// `crate::pools::*` path). Task 11 brings the first production caller.
+// Some of these re-exports are reached by `#[cfg(test)]` code in sibling
+// modules, which construct VdevNode etc. via the `crate::pools::*` path.
 #[allow(unused_imports)]
 pub use self::types::{
     ErrorCounts, PoolHealth, PoolInfo, ScrubState, VdevKind, VdevNode, VdevState,

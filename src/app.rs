@@ -169,7 +169,7 @@ pub struct App {
     /// cleared. `None` when libzfs initialized cleanly (even on hosts with
     /// zero imported pools — that's an empty `pools_snapshot`, not an error).
     pub pools_init_error: Option<String>,
-    /// Pools tab view state (list with selected row / detail drilldown).
+    /// Pools tab view state (tree with selected visible row / detail drilldown).
     pub pools_view: PoolsView,
     /// True until the first non-empty `pools_snapshot` lands. On that
     /// first paint, every pool name is auto-inserted into
@@ -178,7 +178,7 @@ pub struct App {
     /// decisions persist across refreshes, and newly imported pools
     /// start expanded by default.
     pools_first_paint: bool,
-    // NEW datasets fields (mirror pools_*).
+    // Datasets fields (mirror pools_*).
     datasets_source: Option<Box<dyn DatasetsSource>>,
     pub datasets_snapshot: Vec<DatasetNode>,
     pub datasets_refresh_error: Option<String>,
@@ -597,8 +597,8 @@ impl App {
         }
     }
 
-    /// Handle a mouse event. Scroll wheel events on the Pools list move
-    /// the selection; elsewhere they're ignored. Click/drag/move events
+    /// Handle a mouse event. Scroll wheel events on the Pools/Datasets trees
+    /// move the selection; elsewhere they're ignored. Click/drag/move events
     /// are ignored entirely — zftop is keyboard-driven.
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         match mouse.kind {

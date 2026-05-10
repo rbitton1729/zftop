@@ -306,12 +306,14 @@ fn print_help() {
     println!("    r                       Force refresh");
     println!("    1, 2, 3, 4              Switch tab (Overview / Pools / Datasets / ARC)");
     println!("    Tab, Shift+Tab          Cycle tabs forward / back");
-    println!("    (Pools list)");
-    println!("        ↑/↓, j/k            Select pool");
-    println!("        Home, End           Jump to first / last");
+    println!("    (Pools tree)");
+    println!("        ↑/↓, j/k            Select row");
+    println!("        Home, End           Jump to first / last visible");
+    println!("        →/l                 Expand selected pool");
+    println!("        ←/h                 Collapse selected pool, or jump to parent pool");
     println!("        Enter               Drill into pool detail");
     println!("    (Pools detail)");
-    println!("        Esc, Backspace      Return to list");
+    println!("        Esc, Backspace      Return to tree");
     println!("    (Datasets tree)");
     println!("        ↑/↓, j/k            Select row");
     println!("        Home, End           Jump to first / last visible");

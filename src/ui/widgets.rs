@@ -1,6 +1,6 @@
 //! Shared ratatui helpers. Anything drawn in more than one place — the RAM
 //! bar on Overview + ARC, the ARC gauge on Overview + ARC, pool-health
-//! coloring on Overview + Pools list + Pools detail — lives here.
+//! coloring on Overview + Pools tree + Pools detail — lives here.
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
@@ -115,8 +115,7 @@ pub(super) fn draw_arc_gauge(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Style for rendering a `PoolHealth` label. Used by the Overview pools
-/// section, the Pools list HEALTH column, and the Pools detail header.
-#[allow(dead_code)] // Tasks 9-11 bring the first callers.
+/// section, the Pools tree HEALTH column, and the Pools detail header.
 pub(super) fn pool_health_style(health: PoolHealth) -> Style {
     match health {
         PoolHealth::Online => Style::default().fg(Color::Green),

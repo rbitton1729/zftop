@@ -1,6 +1,5 @@
 //! Top-level UI entry. Owns the tab strip, per-tab dispatch, and the footer.
-//! Tab content rendering is delegated to per-tab modules (v0.2b: only
-//! `arc_view` has real content; Overview and Pools are placeholders).
+//! Tab content rendering is delegated to per-tab modules.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
