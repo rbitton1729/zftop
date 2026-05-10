@@ -9,9 +9,9 @@
 // host (Linux), `parse_sysctl_text` consumes captured `sysctl(8)` output from
 // `fixtures/bsd/{vm-stats,hw-mem}.freebsd.txt`.
 
-use anyhow::Result;
 #[cfg(target_os = "freebsd")]
 use anyhow::Context;
+use anyhow::Result;
 #[cfg(any(test, not(target_os = "freebsd")))]
 use anyhow::anyhow;
 use ratatui::style::Color;
@@ -28,7 +28,8 @@ pub struct FreeBsdMemInfo {
     pub active_pages: u64,
     pub inactive_pages: u64,
     pub laundry_pages: u64,
-    #[allow(dead_code)] // parsed from sysctl as a sanity check; the bar's free area is computed implicitly
+    #[allow(dead_code)]
+    // parsed from sysctl as a sanity check; the bar's free area is computed implicitly
     pub free_pages: u64,
 }
 
@@ -73,8 +74,7 @@ impl FreeBsdMemInfo {
 #[cfg(target_os = "freebsd")]
 fn read_sysctl_u64(key: &str) -> Result<u64> {
     use sysctl::Sysctl;
-    let ctl = sysctl::Ctl::new(key)
-        .with_context(|| format!("failed to open sysctl {key}"))?;
+    let ctl = sysctl::Ctl::new(key).with_context(|| format!("failed to open sysctl {key}"))?;
     let s = ctl
         .value_string()
         .with_context(|| format!("failed to read sysctl {key}"))?;
@@ -198,14 +198,24 @@ mod tests {
     #[test]
     fn snapshot_segments_match_fixture() {
         let m = fixture();
-        let src = FreeBsdMemSource { last: Some(m.clone()) };
+        let src = FreeBsdMemSource {
+            last: Some(m.clone()),
+        };
         // Two ARC sub-segments: size + overhead. Sum = 1_472_594_864 (matches
         // arcstats fixture's `size` for back-compat with wired-minus-arc math).
         let arc_size: u64 = 1_400_000_000;
         let arc_ovh: u64 = 72_594_864;
         let arc_segs = vec![
-            RamSegment { label: "ARC", color: Color::Magenta, bytes: arc_size },
-            RamSegment { label: "ARC ovh", color: Color::Indexed(53), bytes: arc_ovh },
+            RamSegment {
+                label: "ARC",
+                color: Color::Magenta,
+                bytes: arc_size,
+            },
+            RamSegment {
+                label: "ARC ovh",
+                color: Color::Indexed(53),
+                bytes: arc_ovh,
+            },
         ];
 
         let snap = src.snapshot(&arc_segs).unwrap();
@@ -249,9 +259,11 @@ mod tests {
             free_pages: 100,
         };
         let src = FreeBsdMemSource { last: Some(m) };
-        let arc_segs = vec![
-            RamSegment { label: "ARC", color: Color::Magenta, bytes: 999_999_999 },
-        ];
+        let arc_segs = vec![RamSegment {
+            label: "ARC",
+            color: Color::Magenta,
+            bytes: 999_999_999,
+        }];
         let snap = src.snapshot(&arc_segs).unwrap();
         assert_eq!(snap.segments[0].bytes, 0); // saturated, didn't underflow
     }

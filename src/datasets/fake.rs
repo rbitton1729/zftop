@@ -72,8 +72,7 @@ mod tests {
 
     #[test]
     fn fail_next_refresh_returns_err_then_recovers() {
-        let mut src =
-            FakeDatasetsSource::new(vec![fs("tank")]).fail_next_refresh("boom");
+        let mut src = FakeDatasetsSource::new(vec![fs("tank")]).fail_next_refresh("boom");
         assert!(src.refresh().is_err());
         // Second refresh succeeds.
         src.refresh().expect("recovers");

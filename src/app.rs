@@ -95,8 +95,7 @@ impl Tab {
     /// Iteration order for the tab strip and for `cycle_tab`. The order
     /// here is the order the tabs appear left-to-right on screen and the
     /// order `Tab` / `Shift+Tab` cycle through them.
-    pub const ALL: &'static [Tab] =
-        &[Tab::Overview, Tab::Pools, Tab::Datasets, Tab::Arc];
+    pub const ALL: &'static [Tab] = &[Tab::Overview, Tab::Pools, Tab::Datasets, Tab::Arc];
 
     pub fn title(&self) -> &'static str {
         match self {
@@ -285,11 +284,8 @@ impl App {
             PoolsView::Tree { expanded, .. } => expanded,
             PoolsView::Detail { expanded, .. } => expanded,
         };
-        let names: std::collections::HashSet<String> = self
-            .pools_snapshot
-            .iter()
-            .map(|p| p.name.clone())
-            .collect();
+        let names: std::collections::HashSet<String> =
+            self.pools_snapshot.iter().map(|p| p.name.clone()).collect();
         expanded.retain(|n| names.contains(n));
     }
 
@@ -342,8 +338,7 @@ impl App {
         let DatasetsView::Tree { expanded, .. } = &mut self.datasets_view else {
             return;
         };
-        let mut all_names: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut all_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         fn walk(node: &DatasetNode, into: &mut std::collections::HashSet<String>) {
             into.insert(node.name.clone());
             for c in &node.children {
@@ -446,7 +441,10 @@ impl App {
                     *selected = visible_count - 1;
                 }
             }
-            PoolsView::Detail { pool_index, expanded } => {
+            PoolsView::Detail {
+                pool_index,
+                expanded,
+            } => {
                 if *pool_index >= self.pools_snapshot.len() {
                     let restored = expanded.clone();
                     self.pools_view = PoolsView::Tree {
@@ -464,10 +462,7 @@ impl App {
     pub fn cycle_tab(&mut self, delta: i32) {
         let all = Tab::ALL;
         let len = all.len() as i32;
-        let current_idx = all
-            .iter()
-            .position(|t| *t == self.current_tab)
-            .unwrap_or(0) as i32;
+        let current_idx = all.iter().position(|t| *t == self.current_tab).unwrap_or(0) as i32;
         let next_idx = ((current_idx + delta) % len + len) % len;
         self.switch_tab(all[next_idx as usize]);
     }
@@ -485,29 +480,32 @@ impl App {
         if target == self.current_tab {
             return;
         }
-        if self.current_tab == Tab::Pools {
-            if let PoolsView::Detail { pool_index: _, expanded } = &self.pools_view {
-                let restored = expanded.clone();
-                self.pools_view = PoolsView::Tree {
-                    expanded: restored,
-                    selected: 0,
-                };
-            }
+        if self.current_tab == Tab::Pools
+            && let PoolsView::Detail {
+                pool_index: _,
+                expanded,
+            } = &self.pools_view
+        {
+            let restored = expanded.clone();
+            self.pools_view = PoolsView::Tree {
+                expanded: restored,
+                selected: 0,
+            };
         }
-        if self.current_tab == Tab::Datasets {
-            if let DatasetsView::Detail { name, expanded } = &self.datasets_view {
-                let prev_name = name.clone();
-                let restored_expanded = expanded.clone();
-                self.datasets_view = DatasetsView::Tree {
-                    expanded: restored_expanded,
-                    selected: 0,
-                };
-                let rows = self.flatten_visible_dataset_rows();
-                if let Some(idx) = rows.iter().position(|(_, n)| n.name == prev_name) {
-                    if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
-                        *selected = idx;
-                    }
-                }
+        if self.current_tab == Tab::Datasets
+            && let DatasetsView::Detail { name, expanded } = &self.datasets_view
+        {
+            let prev_name = name.clone();
+            let restored_expanded = expanded.clone();
+            self.datasets_view = DatasetsView::Tree {
+                expanded: restored_expanded,
+                selected: 0,
+            };
+            let rows = self.flatten_visible_dataset_rows();
+            if let Some(idx) = rows.iter().position(|(_, n)| n.name == prev_name)
+                && let DatasetsView::Tree { selected, .. } = &mut self.datasets_view
+            {
+                *selected = idx;
             }
         }
         self.current_tab = target;
@@ -529,6 +527,7 @@ impl App {
 
     /// Count pools whose health is anything other than Online. Used by the
     /// Overview alarm summary to highlight "something is wrong" at a glance.
+    #[allow(dead_code)]
     pub fn pools_degraded_count(&self) -> usize {
         self.pools_snapshot
             .iter()
@@ -537,11 +536,13 @@ impl App {
     }
 
     /// Sum of `size_bytes` across every pool in the snapshot.
+    #[allow(dead_code)]
     pub fn pools_total_capacity(&self) -> u64 {
         self.pools_snapshot.iter().map(|p| p.size_bytes).sum()
     }
 
     /// Sum of `allocated_bytes` across every pool in the snapshot.
+    #[allow(dead_code)]
     pub fn pools_total_allocated(&self) -> u64 {
         self.pools_snapshot.iter().map(|p| p.allocated_bytes).sum()
     }
@@ -597,8 +598,8 @@ impl App {
     }
 
     /// Handle a mouse event. Scroll wheel events on the Pools list move
-     /// the selection; elsewhere they're ignored. Click/drag/move events
-     /// are ignored entirely — zftop is keyboard-driven.
+    /// the selection; elsewhere they're ignored. Click/drag/move events
+    /// are ignored entirely — zftop is keyboard-driven.
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         match mouse.kind {
             MouseEventKind::ScrollDown => self.scroll(1),
@@ -633,7 +634,11 @@ impl App {
 
     fn on_key_pools(&mut self, key: KeyEvent) {
         // Detail-view bindings first.
-        if let PoolsView::Detail { pool_index: _, expanded } = &self.pools_view {
+        if let PoolsView::Detail {
+            pool_index: _,
+            expanded,
+        } = &self.pools_view
+        {
             match key.code {
                 KeyCode::Esc | KeyCode::Backspace => {
                     let restored = expanded.clone();
@@ -652,17 +657,17 @@ impl App {
         let visible_count = self.flatten_visible_pool_rows().len();
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
-                if let PoolsView::Tree { selected, .. } = &mut self.pools_view {
-                    if *selected + 1 < visible_count {
-                        *selected += 1;
-                    }
+                if let PoolsView::Tree { selected, .. } = &mut self.pools_view
+                    && *selected + 1 < visible_count
+                {
+                    *selected += 1;
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if let PoolsView::Tree { selected, .. } = &mut self.pools_view {
-                    if *selected > 0 {
-                        *selected -= 1;
-                    }
+                if let PoolsView::Tree { selected, .. } = &mut self.pools_view
+                    && *selected > 0
+                {
+                    *selected -= 1;
                 }
             }
             KeyCode::Home => {
@@ -717,7 +722,9 @@ impl App {
                 }
             }
         };
-        self.pools_snapshot.iter().position(|p| p.name == target_pool_name)
+        self.pools_snapshot
+            .iter()
+            .position(|p| p.name == target_pool_name)
     }
 
     /// If the selected row is a Pool with vdevs, insert its name into
@@ -729,9 +736,7 @@ impl App {
                 return;
             };
             match rows.get(*selected) {
-                Some(VisibleRow::Pool(p)) if !p.root_vdev.children.is_empty() => {
-                    p.name.clone()
-                }
+                Some(VisibleRow::Pool(p)) if !p.root_vdev.children.is_empty() => p.name.clone(),
                 _ => return,
             }
         };
@@ -814,10 +819,10 @@ impl App {
                         selected: 0,
                     };
                     let rows = self.flatten_visible_dataset_rows();
-                    if let Some(idx) = rows.iter().position(|(_, n)| n.name == prev_name) {
-                        if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
-                            *selected = idx;
-                        }
+                    if let Some(idx) = rows.iter().position(|(_, n)| n.name == prev_name)
+                        && let DatasetsView::Tree { selected, .. } = &mut self.datasets_view
+                    {
+                        *selected = idx;
                     }
                     return;
                 }
@@ -829,17 +834,17 @@ impl App {
         let visible_count = self.flatten_visible_dataset_rows().len();
         match key.code {
             KeyCode::Down | KeyCode::Char('j') => {
-                if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
-                    if *selected + 1 < visible_count {
-                        *selected += 1;
-                    }
+                if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view
+                    && *selected + 1 < visible_count
+                {
+                    *selected += 1;
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view {
-                    if *selected > 0 {
-                        *selected -= 1;
-                    }
+                if let DatasetsView::Tree { selected, .. } = &mut self.datasets_view
+                    && *selected > 0
+                {
+                    *selected -= 1;
                 }
             }
             KeyCode::Home => {
@@ -880,10 +885,8 @@ impl App {
             (*selected, node.name.clone(), node.has_children())
         };
         let _ = selected_idx;
-        if has_children {
-            if let DatasetsView::Tree { expanded, .. } = &mut self.datasets_view {
-                expanded.insert(name);
-            }
+        if has_children && let DatasetsView::Tree { expanded, .. } = &mut self.datasets_view {
+            expanded.insert(name);
         }
     }
 
@@ -901,7 +904,13 @@ impl App {
                 return;
             };
             let depths_before: Vec<usize> = rows[..*selected].iter().map(|(d, _)| *d).collect();
-            (*selected, depth, node.name.clone(), node.has_children(), depths_before)
+            (
+                *selected,
+                depth,
+                node.name.clone(),
+                node.has_children(),
+                depths_before,
+            )
         };
         if let DatasetsView::Tree { selected, expanded } = &mut self.datasets_view {
             if expanded.contains(&name) && has_children {
@@ -1029,11 +1038,7 @@ impl App {
     }
 }
 
-fn push_vdev_row<'a>(
-    node: &'a crate::pools::VdevNode,
-    depth: u8,
-    out: &mut Vec<VisibleRow<'a>>,
-) {
+fn push_vdev_row<'a>(node: &'a crate::pools::VdevNode, depth: u8, out: &mut Vec<VisibleRow<'a>>) {
     out.push(VisibleRow::Vdev { node, depth });
     for child in &node.children {
         push_vdev_row(child, depth + 1, out);
@@ -1090,10 +1095,10 @@ mod tests {
             prefetch_metadata_hits: 200,
             prefetch_metadata_iohits: 5,
             prefetch_metadata_misses: 50,
-            size: 10 * 1024 * 1024 * 1024,     // 10 GiB
-            c: 16 * 1024 * 1024 * 1024,        // 16 GiB
-            c_min: 1024 * 1024 * 1024,          // 1 GiB
-            c_max: 16 * 1024 * 1024 * 1024,     // 16 GiB
+            size: 10 * 1024 * 1024 * 1024,  // 10 GiB
+            c: 16 * 1024 * 1024 * 1024,     // 16 GiB
+            c_min: 1024 * 1024 * 1024,      // 1 GiB
+            c_max: 16 * 1024 * 1024 * 1024, // 16 GiB
             data_size: 6 * 1024 * 1024 * 1024,
             metadata_size: 1024 * 1024 * 1024,
             anon_size: 512 * 1024 * 1024,
@@ -1236,7 +1241,10 @@ mod tests {
 
     #[test]
     fn tab_all_ordered_overview_pools_datasets_arc() {
-        assert_eq!(Tab::ALL, &[Tab::Overview, Tab::Pools, Tab::Datasets, Tab::Arc]);
+        assert_eq!(
+            Tab::ALL,
+            &[Tab::Overview, Tab::Pools, Tab::Datasets, Tab::Arc]
+        );
     }
 
     #[test]
@@ -1351,8 +1359,7 @@ mod tests {
 
     use crate::pools::fake::FakePoolsSource;
     use crate::pools::{
-        ErrorCounts as PoolErrors, PoolHealth, PoolInfo, ScrubState, VdevKind, VdevNode,
-        VdevState,
+        ErrorCounts as PoolErrors, PoolHealth, PoolInfo, ScrubState, VdevKind, VdevNode, VdevState,
     };
 
     fn test_pool(name: &str, health: PoolHealth, size: u64, alloc: u64) -> PoolInfo {
@@ -1752,7 +1759,10 @@ mod tests {
             50,
         )])));
         app.refresh_pools();
-        assert!(matches!(app.pools_view, PoolsView::Tree { selected: 0, .. }));
+        assert!(matches!(
+            app.pools_view,
+            PoolsView::Tree { selected: 0, .. }
+        ));
     }
 
     use crate::datasets::fake::FakeDatasetsSource;
@@ -1808,7 +1818,11 @@ mod tests {
         ));
         app.refresh_datasets();
         assert!(app.datasets_refresh_error.is_some());
-        assert_eq!(app.datasets_snapshot.len(), 1, "snapshot should be preserved");
+        assert_eq!(
+            app.datasets_snapshot.len(),
+            1,
+            "snapshot should be preserved"
+        );
     }
 
     #[test]
@@ -1819,8 +1833,10 @@ mod tests {
             expanded.insert("tank/home".to_string());
         }
         // Swap in a snapshot that no longer has tank/home.
-        app.datasets_source =
-            Some(Box::new(FakeDatasetsSource::new(vec![ds_fs("tank", vec![])])));
+        app.datasets_source = Some(Box::new(FakeDatasetsSource::new(vec![ds_fs(
+            "tank",
+            vec![],
+        )])));
         app.refresh_datasets();
         if let DatasetsView::Tree { expanded, .. } = &app.datasets_view {
             assert!(expanded.contains("tank"), "tank should still be expanded");
@@ -1844,8 +1860,10 @@ mod tests {
             expanded: expanded_clone,
         };
         // tank/home gets destroyed.
-        app.datasets_source =
-            Some(Box::new(FakeDatasetsSource::new(vec![ds_fs("tank", vec![])])));
+        app.datasets_source = Some(Box::new(FakeDatasetsSource::new(vec![ds_fs(
+            "tank",
+            vec![],
+        )])));
         app.refresh_datasets();
         assert!(matches!(app.datasets_view, DatasetsView::Tree { .. }));
     }
@@ -1875,8 +1893,7 @@ mod tests {
         // meminfo stays agnostic about what counts as ARC.
         let stats = sample_stats();
 
-        let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> =
-            Box::new(move || Ok(sample_stats()));
+        let arc_reader: Box<dyn FnMut() -> Result<ArcStats>> = Box::new(move || Ok(sample_stats()));
         let mem_source: Option<Box<dyn MemSource>> = Some(Box::new(EchoMemSource));
 
         let app = App::new(arc_reader, mem_source, None, None, None, None)
@@ -2053,10 +2070,7 @@ mod tests {
 
     #[test]
     fn datasets_left_collapses_expanded_node() {
-        let mut app = app_with_datasets(vec![ds_fs(
-            "tank",
-            vec![ds_fs("tank/home", vec![])],
-        )]);
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![ds_fs("tank/home", vec![])])]);
         app.current_tab = Tab::Datasets;
         app.on_key(key(KeyCode::Left));
         if let DatasetsView::Tree { expanded, .. } = &app.datasets_view {
@@ -2110,10 +2124,7 @@ mod tests {
 
     #[test]
     fn datasets_esc_returns_to_tree_with_same_selection() {
-        let mut app = app_with_datasets(vec![ds_fs(
-            "tank",
-            vec![ds_fs("tank/home", vec![])],
-        )]);
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![ds_fs("tank/home", vec![])])]);
         app.current_tab = Tab::Datasets;
         let mut expanded = BTreeSet::new();
         expanded.insert("tank".to_string());
@@ -2132,10 +2143,7 @@ mod tests {
 
     #[test]
     fn datasets_keys_ignored_when_not_on_datasets_tab() {
-        let mut app = app_with_datasets(vec![ds_fs(
-            "tank",
-            vec![ds_fs("tank/home", vec![])],
-        )]);
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![ds_fs("tank/home", vec![])])]);
         app.current_tab = Tab::Pools;
         let before = app.datasets_view.clone();
         app.on_key(key(KeyCode::Down));
@@ -2144,10 +2152,7 @@ mod tests {
 
     #[test]
     fn datasets_mouse_scroll_moves_selection() {
-        let mut app = app_with_datasets(vec![ds_fs(
-            "tank",
-            vec![ds_fs("tank/home", vec![])],
-        )]);
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![ds_fs("tank/home", vec![])])]);
         app.current_tab = Tab::Datasets;
         use crossterm::event::{MouseEvent, MouseEventKind};
         let scroll_down = MouseEvent {
@@ -2166,10 +2171,7 @@ mod tests {
 
     #[test]
     fn leaving_datasets_while_in_detail_collapses_to_tree_via_overview_key() {
-        let mut app = app_with_datasets(vec![ds_fs(
-            "tank",
-            vec![ds_fs("tank/home", vec![])],
-        )]);
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![ds_fs("tank/home", vec![])])]);
         app.current_tab = Tab::Datasets;
         let mut expanded = BTreeSet::new();
         expanded.insert("tank".to_string());
@@ -2184,10 +2186,7 @@ mod tests {
 
     #[test]
     fn leaving_datasets_while_in_detail_collapses_to_tree_via_arc_key() {
-        let mut app = app_with_datasets(vec![ds_fs(
-            "tank",
-            vec![ds_fs("tank/home", vec![])],
-        )]);
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![ds_fs("tank/home", vec![])])]);
         app.current_tab = Tab::Datasets;
         let mut expanded = BTreeSet::new();
         expanded.insert("tank".to_string());
@@ -2202,10 +2201,7 @@ mod tests {
 
     #[test]
     fn pressing_datasets_key_while_already_on_datasets_preserves_detail() {
-        let mut app = app_with_datasets(vec![ds_fs(
-            "tank",
-            vec![ds_fs("tank/home", vec![])],
-        )]);
+        let mut app = app_with_datasets(vec![ds_fs("tank", vec![ds_fs("tank/home", vec![])])]);
         app.current_tab = Tab::Datasets;
         let mut expanded = BTreeSet::new();
         expanded.insert("tank".to_string());
@@ -2292,8 +2288,7 @@ mod tests {
         let pools_source: Option<Box<dyn PoolsSource>> =
             Some(Box::new(FakePoolsSource::new(pools)));
         let mut app =
-            App::new(arc_reader, mem, pools_source, None, None, None)
-                .expect("fixture App::new");
+            App::new(arc_reader, mem, pools_source, None, None, None).expect("fixture App::new");
         app.current_tab = Tab::Pools;
         app
     }
@@ -2304,17 +2299,25 @@ mod tests {
         // tank is auto-expanded after first paint, so visible rows are:
         // 0: tank (Pool), 1: raidz1-0 (Vdev), 2: sda, 3: sdb.
         app.on_key(key(KeyCode::Down));
-        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { selected, .. } = &app.pools_view else {
+            panic!()
+        };
         assert_eq!(*selected, 1);
         app.on_key(key(KeyCode::Down));
         app.on_key(key(KeyCode::Down));
-        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { selected, .. } = &app.pools_view else {
+            panic!()
+        };
         assert_eq!(*selected, 3);
         app.on_key(key(KeyCode::Down)); // off the end → no-op
-        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { selected, .. } = &app.pools_view else {
+            panic!()
+        };
         assert_eq!(*selected, 3);
         app.on_key(key(KeyCode::Up));
-        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { selected, .. } = &app.pools_view else {
+            panic!()
+        };
         assert_eq!(*selected, 2);
     }
 
@@ -2330,7 +2333,9 @@ mod tests {
         app.on_key(key(KeyCode::Right));
         // Now expanded → raidz + sda visible.
         assert!(app.flatten_visible_pool_rows().len() >= 2);
-        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else {
+            panic!()
+        };
         assert!(expanded.contains("tank"));
     }
 
@@ -2359,11 +2364,15 @@ mod tests {
     fn left_arrow_collapses_expanded_pool_when_on_pool_row() {
         let mut app = app_via_new_with_pools(vec![pool_with_vdevs("tank", &["sda"])]);
         // Default-expanded.
-        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else {
+            panic!()
+        };
         assert!(expanded.contains("tank"));
         // Selected starts at 0 (the pool row).
         app.on_key(key(KeyCode::Left));
-        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else {
+            panic!()
+        };
         assert!(!expanded.contains("tank"));
     }
 
@@ -2373,10 +2382,14 @@ mod tests {
         // Move to sda (row 2: pool, raidz, sda).
         app.on_key(key(KeyCode::Down));
         app.on_key(key(KeyCode::Down));
-        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { selected, .. } = &app.pools_view else {
+            panic!()
+        };
         assert_eq!(*selected, 2);
         app.on_key(key(KeyCode::Left));
-        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { selected, .. } = &app.pools_view else {
+            panic!()
+        };
         assert_eq!(*selected, 0); // jumped to the tank pool row
     }
 
@@ -2443,7 +2456,7 @@ mod tests {
             _ => panic!(),
         };
         app.on_key(key(KeyCode::Enter)); // drill on tank
-        app.on_key(key(KeyCode::Esc));   // back
+        app.on_key(key(KeyCode::Esc)); // back
         let after: BTreeSet<String> = match &app.pools_view {
             PoolsView::Tree { expanded, .. } => expanded.clone(),
             _ => panic!(),
@@ -2460,7 +2473,9 @@ mod tests {
         }
         // Refresh — prune should drop "ghost" but keep "tank".
         let _ = app.refresh();
-        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else {
+            panic!()
+        };
         assert!(expanded.contains("tank"));
         assert!(!expanded.contains("ghost"));
     }
@@ -2478,9 +2493,13 @@ mod tests {
         // Refresh — first-paint logic must NOT re-add tank, because
         // pools_first_paint was set to false on the first refresh.
         let _ = app.refresh();
-        let PoolsView::Tree { expanded, .. } = &app.pools_view else { panic!() };
-        assert!(!expanded.contains("tank"),
-            "default-expand re-fired after user collapse — pools_first_paint logic broken");
+        let PoolsView::Tree { expanded, .. } = &app.pools_view else {
+            panic!()
+        };
+        assert!(
+            !expanded.contains("tank"),
+            "default-expand re-fired after user collapse — pools_first_paint logic broken"
+        );
     }
 
     #[test]
@@ -2488,11 +2507,15 @@ mod tests {
         let mut app = app_via_new_with_pools(vec![]);
         // No pools → no visible rows.
         assert_eq!(app.flatten_visible_pool_rows().len(), 0);
-        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { selected, .. } = &app.pools_view else {
+            panic!()
+        };
         assert_eq!(*selected, 0);
         // j/k on empty are no-ops.
         app.on_key(key(KeyCode::Down));
-        let PoolsView::Tree { selected, .. } = &app.pools_view else { panic!() };
+        let PoolsView::Tree { selected, .. } = &app.pools_view else {
+            panic!()
+        };
         assert_eq!(*selected, 0);
     }
 

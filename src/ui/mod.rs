@@ -2,11 +2,11 @@
 //! Tab content rendering is delegated to per-tab modules (v0.2b: only
 //! `arc_view` has real content; Overview and Pools are placeholders).
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::{App, DatasetsView, PoolsView, Tab};
 
@@ -163,8 +163,8 @@ mod tests {
     use crate::app::App;
     use crate::arcstats;
     use crate::meminfo::{self, MemSource};
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::path::PathBuf;
 
     fn app_from_fixtures_on_tab(tab: Tab) -> App {
@@ -174,9 +174,8 @@ mod tests {
             let p = arcstats_path.clone();
             Box::new(move || arcstats::linux::from_procfs_path(&p))
         };
-        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
-            meminfo::linux::LinuxMemSource::new(meminfo_path),
-        ));
+        let mem: Option<Box<dyn MemSource>> =
+            Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
         let mut app = App::new(arc_reader, mem, None, None, None, None).expect("fixture App::new");
         app.current_tab = tab;
         app

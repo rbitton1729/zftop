@@ -2,13 +2,13 @@
 //! bar on Overview + ARC, the ARC gauge on Overview + ARC, pool-health
 //! coloring on Overview + Pools list + Pools detail — lives here.
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, Paragraph};
-use ratatui::Frame;
 
-use crate::app::{format_bytes, App};
+use crate::app::{App, format_bytes};
 use crate::pools::PoolHealth;
 
 pub(super) fn draw_ram_bar(frame: &mut Frame, area: Rect, app: &App) {

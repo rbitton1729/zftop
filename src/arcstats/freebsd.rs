@@ -5,15 +5,15 @@
 // `sysctl(8)` output from `fixtures/bsd/arcstats.freebsd.txt`. Both paths funnel
 // through `super::populate` so the field list lives in exactly one place.
 
-use anyhow::Result;
 #[cfg(target_os = "freebsd")]
 use anyhow::Context;
+use anyhow::Result;
 #[cfg(test)]
 use anyhow::anyhow;
 #[cfg(test)]
 use std::collections::HashMap;
 
-use super::{populate, ArcStats};
+use super::{ArcStats, populate};
 
 const KSTAT_PREFIX: &str = "kstat.zfs.misc.arcstats.";
 
@@ -27,8 +27,7 @@ pub fn from_sysctl() -> Result<ArcStats> {
     use sysctl::Sysctl;
     populate(|name| {
         let key = format!("{KSTAT_PREFIX}{name}");
-        let ctl = sysctl::Ctl::new(&key)
-            .with_context(|| format!("failed to open sysctl {key}"))?;
+        let ctl = sysctl::Ctl::new(&key).with_context(|| format!("failed to open sysctl {key}"))?;
         let s = ctl
             .value_string()
             .with_context(|| format!("failed to read sysctl {key}"))?;

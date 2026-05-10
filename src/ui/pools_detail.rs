@@ -3,13 +3,13 @@
 //! shows a Scrub block (active / finished / never) and a reserved
 //! v0.5 SMART placeholder.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
-use crate::app::{format_bytes, App, PoolsView};
+use crate::app::{App, PoolsView, format_bytes};
 use crate::pools::ScrubState;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
@@ -39,20 +39,29 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
 
     // Vertical layout: Scrub section header(1) + body(1) + spacer(1) +
     // SMART header(1) + body(1) + spacer(rest).
-    let [scrub_header, scrub_body, _spacer1, smart_header, smart_body, _rest] =
-        Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
-        .areas(inner);
+    let [
+        scrub_header,
+        scrub_body,
+        _spacer1,
+        smart_header,
+        smart_body,
+        _rest,
+    ] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
 
     let bold = Style::default().add_modifier(Modifier::BOLD);
     frame.render_widget(
-        Paragraph::new(Line::from(vec![Span::raw(" "), Span::styled("Scrub", bold)])),
+        Paragraph::new(Line::from(vec![
+            Span::raw(" "),
+            Span::styled("Scrub", bold),
+        ])),
         scrub_header,
     );
     let scrub_text = format_scrub_header(&pool.scrub);
@@ -165,11 +174,10 @@ mod tests {
     use crate::meminfo::{self, MemSource};
     use crate::pools::fake::FakePoolsSource;
     use crate::pools::{
-        ErrorCounts, PoolHealth, PoolInfo, PoolsSource, ScrubState, VdevKind,
-        VdevNode, VdevState,
+        ErrorCounts, PoolHealth, PoolInfo, PoolsSource, ScrubState, VdevKind, VdevNode, VdevState,
     };
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::collections::BTreeSet;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
@@ -217,9 +225,8 @@ mod tests {
             let p = arcstats_path.clone();
             Box::new(move || arcstats::linux::from_procfs_path(&p))
         };
-        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
-            meminfo::linux::LinuxMemSource::new(meminfo_path),
-        ));
+        let mem: Option<Box<dyn MemSource>> =
+            Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
         let pools = vec![pool];
         let pools_source: Option<Box<dyn PoolsSource>> =
             Some(Box::new(FakePoolsSource::new(pools.clone())));
@@ -259,7 +266,10 @@ mod tests {
     fn detail_renders_pool_name_in_block_title() {
         let app = app_for_detail(raidz_pool());
         let out = render_detail(&app);
-        assert!(out.contains("tank"), "block title missing pool name: {out:?}");
+        assert!(
+            out.contains("tank"),
+            "block title missing pool name: {out:?}"
+        );
     }
 
     #[test]
@@ -308,7 +318,10 @@ mod tests {
             expanded: BTreeSet::new(),
         };
         let out = render_detail(&app);
-        assert!(out.contains("no pool selected"), "missing fallback: {out:?}");
+        assert!(
+            out.contains("no pool selected"),
+            "missing fallback: {out:?}"
+        );
     }
 
     // Existing format_eta tests — keep these unchanged.

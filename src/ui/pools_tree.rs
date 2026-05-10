@@ -9,14 +9,14 @@
 //! highlight uses `Row::style(bg DarkGray + bold)` which propagates to
 //! all cells while preserving each cell's foreground color.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Cell, Row, Table};
-use ratatui::Frame;
 
 use super::widgets;
-use crate::app::{format_bytes, App, PoolsView, VisibleRow};
+use crate::app::{App, PoolsView, VisibleRow, format_bytes};
 use crate::pools::{PoolHealth, PoolInfo, ScrubState, VdevKind, VdevNode, VdevState};
 
 const WIDE_THRESHOLD: u16 = 100;
@@ -158,10 +158,7 @@ fn build_pool_row<'a>(
             None => "—".into(),
         };
         let err_sum = p.root_vdev.total_errors();
-        let err_cell = Cell::from(Span::styled(
-            format!("{err_sum}"),
-            err_style(err_sum),
-        ));
+        let err_cell = Cell::from(Span::styled(format!("{err_sum}"), err_style(err_sum)));
         vec![
             Cell::from(name_cell),
             health_cell,
@@ -197,12 +194,7 @@ fn build_pool_row<'a>(
     }
 }
 
-fn build_vdev_row<'a>(
-    node: &'a VdevNode,
-    depth: u8,
-    is_selected: bool,
-    wide: bool,
-) -> Row<'a> {
+fn build_vdev_row<'a>(node: &'a VdevNode, depth: u8, is_selected: bool, wide: bool) -> Row<'a> {
     // Indent + leading 2-space "glyph slot" so the name aligns under the
     // pool's name (which is "{glyph} {name}" — glyph + space + name).
     let indent = "  ".repeat(depth as usize);
@@ -261,7 +253,11 @@ fn build_vdev_row<'a>(
         ]
     } else {
         // Narrow: drop DEVICE_PATH; combine R/W/C into a single ERR cell.
-        let err_sum_val = if is_group(node.kind) { 0 } else { node.errors.sum() };
+        let err_sum_val = if is_group(node.kind) {
+            0
+        } else {
+            node.errors.sum()
+        };
         let err_sum_str = if is_group(node.kind) {
             String::new()
         } else {
@@ -409,11 +405,10 @@ mod tests {
     use crate::meminfo::{self, MemSource};
     use crate::pools::fake::FakePoolsSource;
     use crate::pools::{
-        ErrorCounts, PoolHealth, PoolInfo, PoolsSource, ScrubState, VdevKind,
-        VdevNode, VdevState,
+        ErrorCounts, PoolHealth, PoolInfo, PoolsSource, ScrubState, VdevKind, VdevNode, VdevState,
     };
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::path::PathBuf;
 
     fn leaf(name: &str, errors: ErrorCounts, device_path: Option<&str>) -> VdevNode {
@@ -469,9 +464,8 @@ mod tests {
             let p = arcstats_path.clone();
             Box::new(move || arcstats::linux::from_procfs_path(&p))
         };
-        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
-            meminfo::linux::LinuxMemSource::new(meminfo_path),
-        ));
+        let mem: Option<Box<dyn MemSource>> =
+            Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
         let pools_source: Option<Box<dyn PoolsSource>> =
             Some(Box::new(FakePoolsSource::new(pools.clone())));
         let mut app = App::new(arc_reader, mem, pools_source, pools_init_error, None, None)
@@ -530,7 +524,10 @@ mod tests {
         let app = app_for_tree(vec![pool], None, &[]); // not expanded
         let out = render(&app, 120, 24);
         assert!(out.contains("tank"));
-        assert!(!out.contains("raidz1-0"), "should not show raidz when collapsed");
+        assert!(
+            !out.contains("raidz1-0"),
+            "should not show raidz when collapsed"
+        );
         assert!(!out.contains("sda"), "should not show leaf when collapsed");
         assert!(out.contains("▶"), "collapsed pool should show ▶ glyph");
     }
@@ -564,8 +561,7 @@ mod tests {
         // enough room for the full path tail.
         let out = render(&app, 200, 24);
         assert!(
-            out.contains("/dev/disk/by-id/wwn-0x500abc")
-                || out.contains("by-id/wwn-0x500abc"),
+            out.contains("/dev/disk/by-id/wwn-0x500abc") || out.contains("by-id/wwn-0x500abc"),
             "device path missing or truncated unexpectedly: {out:?}"
         );
     }
@@ -578,8 +574,7 @@ mod tests {
         // therefore asserts that the path is partially visible (the
         // leading prefix survives) but the trailing "fff" suffix does
         // not (because the cell is too narrow to fit the full path).
-        let long_path =
-            "/dev/disk/by-id/wwn-0x500abc123def4567890aaabbbccc1234567890dddeeefff";
+        let long_path = "/dev/disk/by-id/wwn-0x500abc123def4567890aaabbbccc1234567890dddeeefff";
         let pool = raidz1_pool(
             "tank",
             vec![leaf("sda", ErrorCounts::default(), Some(long_path))],
@@ -743,18 +738,22 @@ mod tests {
             let p = arcstats_path.clone();
             Box::new(move || arcstats::linux::from_procfs_path(&p))
         };
-        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
-            meminfo::linux::LinuxMemSource::new(meminfo_path),
-        ));
+        let mem: Option<Box<dyn MemSource>> =
+            Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
         let pool = raidz1_pool("tank", vec![leaf("sda", ErrorCounts::default(), None)]);
         let pools_source: Option<Box<dyn PoolsSource>> =
             Some(Box::new(FakePoolsSource::new(vec![pool.clone()])));
-        let mut app = App::new(arc_reader, mem, pools_source, None, None, None)
-            .expect("App::new");
+        let mut app = App::new(arc_reader, mem, pools_source, None, None, None).expect("App::new");
         app.current_tab = Tab::Pools;
         app.pools_snapshot = vec![pool];
         let out = render(&app, 120, 24);
-        assert!(out.contains("▼"), "default-expand should show ▼ on first paint: {out:?}");
-        assert!(out.contains("raidz1-0"), "vdev rows should be visible by default: {out:?}");
+        assert!(
+            out.contains("▼"),
+            "default-expand should show ▼ on first paint: {out:?}"
+        );
+        assert!(
+            out.contains("raidz1-0"),
+            "vdev rows should be visible by default: {out:?}"
+        );
     }
 }

@@ -2,8 +2,8 @@
 //! optional error to return from the next `refresh()` call. Available to
 //! any `#[cfg(test)]` code in the crate.
 
-use super::types::PoolInfo;
 use super::PoolsSource;
+use super::types::PoolInfo;
 
 #[derive(Default)]
 pub struct FakePoolsSource {
@@ -21,6 +21,7 @@ impl FakePoolsSource {
         }
     }
 
+    #[allow(dead_code)]
     pub fn empty() -> Self {
         Self::default()
     }

@@ -4,16 +4,16 @@
 // lines we skip. We build a `name -> u64` map and feed it to the shared
 // populator via a closure.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use super::{populate, ArcStats};
+use super::{ArcStats, populate};
 
 pub fn from_procfs_path(path: &Path) -> Result<ArcStats> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     parse(&content)
 }
 

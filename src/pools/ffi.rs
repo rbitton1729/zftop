@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Raw FFI bindings to libzfs — runtime-loaded via `dlopen`.
 //!
 //! The previous iteration link-bound against `libzfs.so` via
@@ -38,8 +40,8 @@
 //! - Check `c_int` return codes: 0 means success, non-zero is errno-ish
 //!   failure and the out-pointer has not been written to.
 
-use anyhow::{anyhow, Context, Result};
-use std::ffi::{c_char, c_int, c_uint, c_void, CStr};
+use anyhow::{Context, Result, anyhow};
+use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use std::ptr;
 
 // ---------------------------------------------------------------------------
@@ -334,7 +336,9 @@ fn last_dl_error() -> String {
 ///   symbols being visible process-wide.
 fn try_dlopen_sonames(sonames: &[&CStr]) -> Result<*mut c_void> {
     // Clear any pre-existing dlerror state before we start.
-    unsafe { let _ = dlerror(); }
+    unsafe {
+        let _ = dlerror();
+    }
 
     let mut last_err = String::new();
     for soname in sonames {
@@ -366,7 +370,9 @@ fn try_dlopen_sonames(sonames: &[&CStr]) -> Result<*mut c_void> {
 /// `try_dlopen_sonames` call and not yet closed.
 unsafe fn dlsym_required(handle: *mut c_void, name: &CStr) -> Result<*mut c_void> {
     // Clear any pre-existing dlerror state.
-    unsafe { let _ = dlerror(); }
+    unsafe {
+        let _ = dlerror();
+    }
     // SAFETY: `handle` is valid per function contract; `name` is nul-terminated.
     let sym = unsafe { dlsym(handle, name.as_ptr()) };
     if sym.is_null() {
@@ -387,16 +393,12 @@ unsafe fn dlsym_required(handle: *mut c_void, name: &CStr) -> Result<*mut c_void
 
 pub type LibzfsInitFn = unsafe extern "C" fn() -> *mut libzfs_handle_t;
 pub type LibzfsFiniFn = unsafe extern "C" fn(*mut libzfs_handle_t);
-pub type LibzfsErrorDescriptionFn =
-    unsafe extern "C" fn(*mut libzfs_handle_t) -> *const c_char;
+pub type LibzfsErrorDescriptionFn = unsafe extern "C" fn(*mut libzfs_handle_t) -> *const c_char;
 
 // The C typedef is `zpool_iter_f` (snake_case) — keep the same name so the
 // signature lines up with the header at a glance.
 #[allow(non_camel_case_types)]
-pub type zpool_iter_f = unsafe extern "C" fn(
-    zhp: *mut zpool_handle_t,
-    data: *mut c_void,
-) -> c_int;
+pub type zpool_iter_f = unsafe extern "C" fn(zhp: *mut zpool_handle_t, data: *mut c_void) -> c_int;
 
 pub type ZpoolIterFn = unsafe extern "C" fn(
     handle: *mut libzfs_handle_t,
@@ -407,17 +409,13 @@ pub type ZpoolGetNameFn = unsafe extern "C" fn(*mut zpool_handle_t) -> *const c_
 pub type ZpoolGetStateFn = unsafe extern "C" fn(*mut zpool_handle_t) -> c_int;
 pub type ZpoolGetConfigFn =
     unsafe extern "C" fn(*mut zpool_handle_t, *mut *mut nvlist_t) -> *mut nvlist_t;
-pub type ZpoolGetPropIntFn =
-    unsafe extern "C" fn(*mut zpool_handle_t, c_int, *mut c_int) -> u64;
+pub type ZpoolGetPropIntFn = unsafe extern "C" fn(*mut zpool_handle_t, c_int, *mut c_int) -> u64;
 pub type ZpoolCloseFn = unsafe extern "C" fn(*mut zpool_handle_t);
 
 // The C typedef is `zfs_iter_f` — same shape as `zpool_iter_f` but takes
 // a `zfs_handle_t*`.
 #[allow(non_camel_case_types)]
-pub type zfs_iter_f = unsafe extern "C" fn(
-    zhp: *mut zfs_handle_t,
-    data: *mut c_void,
-) -> c_int;
+pub type zfs_iter_f = unsafe extern "C" fn(zhp: *mut zfs_handle_t, data: *mut c_void) -> c_int;
 
 pub type ZfsOpenFn = unsafe extern "C" fn(
     handle: *mut libzfs_handle_t,
@@ -427,15 +425,11 @@ pub type ZfsOpenFn = unsafe extern "C" fn(
 pub type ZfsCloseFn = unsafe extern "C" fn(*mut zfs_handle_t);
 pub type ZfsGetNameFn = unsafe extern "C" fn(*mut zfs_handle_t) -> *const c_char;
 pub type ZfsGetTypeFn = unsafe extern "C" fn(*mut zfs_handle_t) -> c_int;
-pub type ZfsIterFilesystemsFn = unsafe extern "C" fn(
-    handle: *mut zfs_handle_t,
-    func: zfs_iter_f,
-    data: *mut c_void,
-) -> c_int;
+pub type ZfsIterFilesystemsFn =
+    unsafe extern "C" fn(handle: *mut zfs_handle_t, func: zfs_iter_f, data: *mut c_void) -> c_int;
 /// `zfs_prop_get_int(handle, prop) -> u64`. Used for size / count
 /// properties. Returns 0 if the property is unset/inherited.
-pub type ZfsPropGetIntFn =
-    unsafe extern "C" fn(*mut zfs_handle_t, c_int) -> u64;
+pub type ZfsPropGetIntFn = unsafe extern "C" fn(*mut zfs_handle_t, c_int) -> u64;
 /// `zfs_prop_get(handle, prop, propbuf, proplen, src, statbuf,
 /// statlen, literal)`. Used for string properties. Returns 0 on
 /// success, non-zero on failure. `src` (out) receives the property
@@ -466,12 +460,8 @@ pub type NvlistLookupNvlistArrayFn = unsafe extern "C" fn(
     *mut *mut *mut nvlist_t,
     *mut c_uint,
 ) -> c_int;
-pub type NvlistLookupUint64ArrayFn = unsafe extern "C" fn(
-    *mut nvlist_t,
-    *const c_char,
-    *mut *mut u64,
-    *mut c_uint,
-) -> c_int;
+pub type NvlistLookupUint64ArrayFn =
+    unsafe extern "C" fn(*mut nvlist_t, *const c_char, *mut *mut u64, *mut c_uint) -> c_int;
 
 // ---------------------------------------------------------------------------
 // Libzfs — owns dlopen handles + dlsym'd function pointers. Created once at
@@ -589,8 +579,7 @@ impl Libzfs {
             let zpool_close: ZpoolCloseFn =
                 std::mem::transmute(dlsym_required(zfs_handle, c"zpool_close")?);
 
-            let zfs_open: ZfsOpenFn =
-                std::mem::transmute(dlsym_required(zfs_handle, c"zfs_open")?);
+            let zfs_open: ZfsOpenFn = std::mem::transmute(dlsym_required(zfs_handle, c"zfs_open")?);
             let zfs_close: ZfsCloseFn =
                 std::mem::transmute(dlsym_required(zfs_handle, c"zfs_close")?);
             let zfs_get_name: ZfsGetNameFn =

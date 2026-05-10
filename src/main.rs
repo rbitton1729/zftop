@@ -8,20 +8,20 @@ mod ui;
 use std::io;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
+use crossterm::ExecutableCommand;
 use crossterm::cursor::MoveTo;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
 };
 use crossterm::terminal;
-use crossterm::ExecutableCommand;
-use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::Terminal;
+use ratatui::backend::{Backend, CrosstermBackend};
 
 use app::App;
 use arcstats::ArcStats;
@@ -137,7 +137,14 @@ fn build_sources(source: PathBuf, meminfo_source: Option<PathBuf>) -> BuildSourc
         Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
     let (pools, pools_init_error) = build_pools_source();
     let (datasets, datasets_init_error) = build_datasets_source();
-    (arc_reader, mem, pools, pools_init_error, datasets, datasets_init_error)
+    (
+        arc_reader,
+        mem,
+        pools,
+        pools_init_error,
+        datasets,
+        datasets_init_error,
+    )
 }
 
 #[cfg(target_os = "freebsd")]
@@ -152,7 +159,14 @@ fn build_sources(source: PathBuf, meminfo_source: Option<PathBuf>) -> BuildSourc
         .map(|s| Box::new(s) as Box<dyn MemSource>);
     let (pools, pools_init_error) = build_pools_source();
     let (datasets, datasets_init_error) = build_datasets_source();
-    (arc_reader, mem, pools, pools_init_error, datasets, datasets_init_error)
+    (
+        arc_reader,
+        mem,
+        pools,
+        pools_init_error,
+        datasets,
+        datasets_init_error,
+    )
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -277,8 +291,12 @@ fn print_help() {
     println!();
     println!("OPTIONS:");
     println!("    -n, --interval <ms>     Polling interval in milliseconds [default: 1000]");
-    println!("        --source <path>     Path to arcstats file [Linux only; default: /proc/spl/kstat/zfs/arcstats]");
-    println!("        --meminfo <path>    Path to meminfo file [Linux only; default: /proc/meminfo]");
+    println!(
+        "        --source <path>     Path to arcstats file [Linux only; default: /proc/spl/kstat/zfs/arcstats]"
+    );
+    println!(
+        "        --meminfo <path>    Path to meminfo file [Linux only; default: /proc/meminfo]"
+    );
     println!("    -U, --upgrade           Print the command to upgrade to the latest release");
     println!("    -h, --help              Print this help message");
     println!("    -V, --version           Print version");
@@ -336,7 +354,9 @@ fn parse_args() -> (PathBuf, Option<PathBuf>, Duration) {
                 println!("  less install.sh                        # inspect before running");
                 println!("  sh install.sh --version 0.3.0          # pin a specific release");
                 println!("  sh install.sh --dir ~/.local/bin       # custom install directory");
-                println!("  sh install.sh --force                  # skip the ZFS-not-detected prompt");
+                println!(
+                    "  sh install.sh --force                  # skip the ZFS-not-detected prompt"
+                );
                 std::process::exit(0);
             }
             "--source" => {

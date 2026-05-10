@@ -4,13 +4,13 @@
 //! its own `libzfs_handle_t`. dlopen ref-counts the shared library so
 //! the `.so` mapping is shared at the OS level.
 
-use anyhow::{anyhow, Context, Result};
-use std::ffi::{c_int, c_void, CStr};
+use anyhow::{Context, Result, anyhow};
+use std::ffi::{CStr, c_int, c_void};
 use std::ptr;
 use std::time::{Duration, UNIX_EPOCH};
 
-use crate::datasets::types::{DatasetKind, DatasetNode, DatasetProperties};
 use crate::datasets::DatasetsSource;
+use crate::datasets::types::{DatasetKind, DatasetNode, DatasetProperties};
 use crate::pools::ffi::{self, Libzfs};
 
 pub struct LibzfsDatasetsSource {
@@ -115,8 +115,8 @@ fn build_dataset_tree(
     handle: *mut ffi::libzfs_handle_t,
     pool_name: &str,
 ) -> Result<DatasetNode> {
-    let c_name = std::ffi::CString::new(pool_name)
-        .map_err(|e| anyhow!("invalid pool name: {e}"))?;
+    let c_name =
+        std::ffi::CString::new(pool_name).map_err(|e| anyhow!("invalid pool name: {e}"))?;
     // SAFETY: handle non-null per Source contract; c_name is nul-
     // terminated; types is a valid bitmask.
     let zhp = unsafe {
@@ -208,10 +208,7 @@ fn build_dataset_node(lz: &Libzfs, zhp: *mut ffi::zfs_handle_t) -> DatasetNode {
     }
 }
 
-unsafe extern "C" fn collect_zfs_handle(
-    zhp: *mut ffi::zfs_handle_t,
-    data: *mut c_void,
-) -> c_int {
+unsafe extern "C" fn collect_zfs_handle(zhp: *mut ffi::zfs_handle_t, data: *mut c_void) -> c_int {
     // SAFETY: data is &mut Vec<*mut zfs_handle_t> passed in by
     // build_dataset_node. Vec outlives this callback.
     let vec = unsafe { &mut *(data as *mut Vec<*mut ffi::zfs_handle_t>) };
@@ -227,12 +224,12 @@ fn read_dataset_properties(
     let mut p = DatasetProperties::default();
 
     // Mountpoint — string, only meaningful for filesystems.
-    if matches!(kind, DatasetKind::Filesystem) {
-        if let Some(s) = read_string_prop(lz, zhp, ffi::ZFS_PROP_MOUNTPOINT) {
-            // libzfs returns "none" / "legacy" for unset/legacy.
-            if s != "none" && s != "legacy" {
-                p.mountpoint = Some(s);
-            }
+    if matches!(kind, DatasetKind::Filesystem)
+        && let Some(s) = read_string_prop(lz, zhp, ffi::ZFS_PROP_MOUNTPOINT)
+    {
+        // libzfs returns "none" / "legacy" for unset/legacy.
+        if s != "none" && s != "legacy" {
+            p.mountpoint = Some(s);
         }
     }
 
@@ -312,11 +309,7 @@ fn read_dataset_properties(
 /// Read a string property using `zfs_prop_get`. Returns None on failure
 /// or when the property source is purely NONE/DEFAULT (treated as "unset"
 /// for UI purposes).
-fn read_string_prop(
-    lz: &Libzfs,
-    zhp: *mut ffi::zfs_handle_t,
-    prop: c_int,
-) -> Option<String> {
+fn read_string_prop(lz: &Libzfs, zhp: *mut ffi::zfs_handle_t, prop: c_int) -> Option<String> {
     let mut propbuf = [0i8; 1024];
     let mut statbuf = [0i8; 1024];
     let mut src: c_int = 0;
@@ -349,11 +342,7 @@ fn read_string_prop(
     let s = unsafe { CStr::from_ptr(propbuf.as_ptr() as *const _) }
         .to_string_lossy()
         .into_owned();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 #[cfg(test)]
@@ -380,11 +369,7 @@ mod tests {
         for root in src.roots() {
             eprintln!(
                 "- {} ({:?}) used={} refer={} compress={:.2}",
-                root.name,
-                root.kind,
-                root.used_bytes,
-                root.refer_bytes,
-                root.compression_ratio
+                root.name, root.kind, root.used_bytes, root.refer_bytes, root.compression_ratio
             );
             for c in &root.children {
                 eprintln!("  - {} ({:?})", c.name, c.kind);
@@ -397,8 +382,7 @@ mod tests {
     #[cfg(target_os = "freebsd")]
     #[test]
     fn libzfs_freebsd_integration() {
-        let mut src = LibzfsDatasetsSource::new()
-            .expect("init on bsd-1 should succeed");
+        let mut src = LibzfsDatasetsSource::new().expect("init on bsd-1 should succeed");
         src.refresh().expect("refresh");
         let roots = src.roots();
         assert!(

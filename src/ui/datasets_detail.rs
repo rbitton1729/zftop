@@ -2,13 +2,13 @@
 //! (2-column Table). `format_quota_value` formats quota usage cells
 //! with a colour cue when usage crosses the warning/critical thresholds.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
-use ratatui::Frame;
 
-use crate::app::{format_bytes, App, DatasetsView};
+use crate::app::{App, DatasetsView, format_bytes};
 use crate::datasets::{DatasetKind, DatasetNode};
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
@@ -21,8 +21,8 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, area);
 
     let Some(node) = find_dataset(&app.datasets_snapshot, &name) else {
-        let p = Paragraph::new("(dataset no longer present)")
-            .style(Style::default().fg(Color::Red));
+        let p =
+            Paragraph::new("(dataset no longer present)").style(Style::default().fg(Color::Red));
         frame.render_widget(p, inner);
         return;
     };
@@ -167,14 +167,22 @@ fn draw_property_grid(frame: &mut Frame, area: Rect, node: &DatasetNode) {
             if let Some(s) = &p.snapdir_visible {
                 rows.push(prop_row(
                     "snapdir",
-                    if *s { "visible".into() } else { "hidden".into() },
+                    if *s {
+                        "visible".into()
+                    } else {
+                        "hidden".into()
+                    },
                     Style::default(),
                 ));
             }
         }
         DatasetKind::Volume => {
             if let Some(vbs) = p.volblocksize_bytes {
-                rows.push(prop_row("Volblocksize", format_bytes(vbs), Style::default()));
+                rows.push(prop_row(
+                    "Volblocksize",
+                    format_bytes(vbs),
+                    Style::default(),
+                ));
             }
         }
     }
@@ -189,8 +197,16 @@ fn draw_property_grid(frame: &mut Frame, area: Rect, node: &DatasetNode) {
     let (refquota_text, refquota_style) = format_quota_value(p.refquota_bytes, node.refer_bytes);
     rows.push(prop_row("Refquota", refquota_text, refquota_style));
 
-    rows.push(prop_row("Reservation", opt_bytes(p.reservation_bytes), Style::default()));
-    rows.push(prop_row("Refreservation", opt_bytes(p.refreservation_bytes), Style::default()));
+    rows.push(prop_row(
+        "Reservation",
+        opt_bytes(p.reservation_bytes),
+        Style::default(),
+    ));
+    rows.push(prop_row(
+        "Refreservation",
+        opt_bytes(p.refreservation_bytes),
+        Style::default(),
+    ));
     if let Some(d) = p.dedup_on {
         rows.push(prop_row(
             "Dedup",
@@ -225,18 +241,15 @@ fn opt_bytes(b: Option<u64>) -> String {
 /// set returns ("—", default). When set returns "<limit>  (<used>
 /// used, <pct>%)" with the style coloured red ≥90%, yellow ≥75%,
 /// default otherwise.
-pub(super) fn format_quota_value(
-    limit: Option<u64>,
-    used: u64,
-) -> (String, Style) {
+pub(super) fn format_quota_value(limit: Option<u64>, used: u64) -> (String, Style) {
     let Some(limit) = limit else {
         return ("—".into(), Style::default());
     };
-    let pct = if limit == 0 {
-        0
-    } else {
-        ((used.saturating_mul(100)) / limit).min(999) as u32
-    };
+    let pct = used
+        .saturating_mul(100)
+        .checked_div(limit)
+        .unwrap_or(0)
+        .min(999) as u32;
     let style = if pct >= 90 {
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
     } else if pct >= 75 {
@@ -259,12 +272,12 @@ mod tests {
     use super::*;
     use crate::app::{App, Tab};
     use crate::arcstats;
+    use crate::datasets::DatasetsSource;
     use crate::datasets::fake::FakeDatasetsSource;
     use crate::datasets::types::DatasetProperties;
-    use crate::datasets::DatasetsSource;
     use crate::meminfo::{self, MemSource};
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
@@ -333,13 +346,12 @@ mod tests {
             let p = PathBuf::from("fixtures/arcstats");
             Box::new(move || arcstats::linux::from_procfs_path(&p))
         };
-        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
-            meminfo::linux::LinuxMemSource::new(PathBuf::from("fixtures/meminfo")),
-        ));
+        let mem: Option<Box<dyn MemSource>> = Some(Box::new(meminfo::linux::LinuxMemSource::new(
+            PathBuf::from("fixtures/meminfo"),
+        )));
         let ds: Option<Box<dyn DatasetsSource>> =
             Some(Box::new(FakeDatasetsSource::new(vec![node.clone()])));
-        let mut app = App::new(arc_reader, mem, None, None, ds, None)
-            .expect("fixture App::new");
+        let mut app = App::new(arc_reader, mem, None, None, ds, None).expect("fixture App::new");
         app.current_tab = Tab::Datasets;
         let mut expanded = BTreeSet::new();
         expanded.insert(node.name.clone());
@@ -365,8 +377,10 @@ mod tests {
 
     #[test]
     fn filesystem_detail_shows_mountpoint_line() {
-        let mut props = DatasetProperties::default();
-        props.mountpoint = Some("/tank/home/alice".into());
+        let props = DatasetProperties {
+            mountpoint: Some("/tank/home/alice".into()),
+            ..Default::default()
+        };
         let out = render_detail_for(fs_with_props("tank/home/alice", props));
         assert!(out.contains("Mountpoint: /tank/home/alice"));
     }
@@ -380,8 +394,10 @@ mod tests {
 
     #[test]
     fn volume_detail_omits_atime_and_snapdir_rows() {
-        let mut props = DatasetProperties::default();
-        props.volblocksize_bytes = Some(8192);
+        let props = DatasetProperties {
+            volblocksize_bytes: Some(8192),
+            ..Default::default()
+        };
         let out = render_detail_for(vol_with_props("tank/swap", props));
         assert!(out.contains("Volblocksize"));
         assert!(!out.contains("atime"));

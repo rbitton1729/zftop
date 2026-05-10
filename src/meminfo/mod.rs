@@ -7,10 +7,10 @@
 use anyhow::Result;
 use ratatui::style::Color;
 
-#[cfg(any(test, target_os = "linux"))]
-pub mod linux;
 #[cfg(any(test, target_os = "freebsd"))]
 pub mod freebsd;
+#[cfg(any(test, target_os = "linux"))]
+pub mod linux;
 
 /// One coloured segment of the system RAM bar.
 #[derive(Debug, Clone)]

@@ -10,11 +10,12 @@
 
 use anyhow::{Context, Result};
 
-#[cfg(any(test, target_os = "linux"))]
-pub mod linux;
 #[cfg(any(test, target_os = "freebsd"))]
 pub mod freebsd;
+#[cfg(any(test, target_os = "linux"))]
+pub mod linux;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ArcStats {
     // Overall hit/miss/iohit
@@ -89,15 +90,23 @@ where
         demand_data_hits: get("demand_data_hits").context("missing 'demand_data_hits'")?,
         demand_data_iohits: get("demand_data_iohits").context("missing 'demand_data_iohits'")?,
         demand_data_misses: get("demand_data_misses").context("missing 'demand_data_misses'")?,
-        demand_metadata_hits: get("demand_metadata_hits").context("missing 'demand_metadata_hits'")?,
-        demand_metadata_iohits: get("demand_metadata_iohits").context("missing 'demand_metadata_iohits'")?,
-        demand_metadata_misses: get("demand_metadata_misses").context("missing 'demand_metadata_misses'")?,
+        demand_metadata_hits: get("demand_metadata_hits")
+            .context("missing 'demand_metadata_hits'")?,
+        demand_metadata_iohits: get("demand_metadata_iohits")
+            .context("missing 'demand_metadata_iohits'")?,
+        demand_metadata_misses: get("demand_metadata_misses")
+            .context("missing 'demand_metadata_misses'")?,
         prefetch_data_hits: get("prefetch_data_hits").context("missing 'prefetch_data_hits'")?,
-        prefetch_data_iohits: get("prefetch_data_iohits").context("missing 'prefetch_data_iohits'")?,
-        prefetch_data_misses: get("prefetch_data_misses").context("missing 'prefetch_data_misses'")?,
-        prefetch_metadata_hits: get("prefetch_metadata_hits").context("missing 'prefetch_metadata_hits'")?,
-        prefetch_metadata_iohits: get("prefetch_metadata_iohits").context("missing 'prefetch_metadata_iohits'")?,
-        prefetch_metadata_misses: get("prefetch_metadata_misses").context("missing 'prefetch_metadata_misses'")?,
+        prefetch_data_iohits: get("prefetch_data_iohits")
+            .context("missing 'prefetch_data_iohits'")?,
+        prefetch_data_misses: get("prefetch_data_misses")
+            .context("missing 'prefetch_data_misses'")?,
+        prefetch_metadata_hits: get("prefetch_metadata_hits")
+            .context("missing 'prefetch_metadata_hits'")?,
+        prefetch_metadata_iohits: get("prefetch_metadata_iohits")
+            .context("missing 'prefetch_metadata_iohits'")?,
+        prefetch_metadata_misses: get("prefetch_metadata_misses")
+            .context("missing 'prefetch_metadata_misses'")?,
         size: get("size").context("missing 'size'")?,
         c: get("c").context("missing 'c'")?,
         c_min: get("c_min").context("missing 'c_min'")?,
@@ -120,7 +129,8 @@ where
         uncompressed_size: get("uncompressed_size").context("missing 'uncompressed_size'")?,
         memory_all_bytes: get("memory_all_bytes").context("missing 'memory_all_bytes'")?,
         memory_free_bytes: get("memory_free_bytes").context("missing 'memory_free_bytes'")?,
-        memory_available_bytes: get("memory_available_bytes").context("missing 'memory_available_bytes'")?,
+        memory_available_bytes: get("memory_available_bytes")
+            .context("missing 'memory_available_bytes'")?,
         arc_meta_used: get("arc_meta_used").context("missing 'arc_meta_used'")?,
     })
 }

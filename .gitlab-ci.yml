@@ -35,6 +35,24 @@ cache:
     - .cargo/registry
     - .cargo/git
 
+fmt:
+  stage: test
+  image: rust:1-buster
+  before_script:
+    - rustup default stable
+    - rustup component add rustfmt
+  script:
+    - cargo fmt --check
+
+clippy:
+  stage: test
+  image: rust:1-buster
+  before_script:
+    - rustup default stable
+    - rustup component add clippy
+  script:
+    - cargo clippy --all-targets -- -D warnings
+
 test:
   stage: test
   # Pinned to the same Debian 10 image the build jobs use so that tests
