@@ -23,10 +23,11 @@ Already have it? `zftop --upgrade` will print the update command.
 
 ## What it shows
 
-Three tabs, refreshing once a second:
+Four tabs, refreshing once a second:
 
 - **Overview** — RAM bar, ARC gauge + hit ratios, pool health/capacity at a glance.
-- **Pools** — pool list with health, capacity, fragmentation, scrub state, errors. `Enter` drills into the vdev tree.
+- **Pools** — expandable tree of pools and their vdevs. `←/→` collapse/expand each pool. Pool rows show health, capacity, frag, scrub state, errors. Vdev rows show state, kind, size, device path, and per-vdev R/W/C error counts. `Enter` drills into a per-pool detail page (scrub progress, future SMART rollup).
+- **Datasets** — tree view of every imported pool's filesystems and zvols. `←/→` collapse/expand. Rows show used / referenced / available / compression ratio. `Enter` drills into per-dataset properties (mountpoint, recordsize, quota usage, dedup, encryption, etc.).
 - **ARC** — size gauge, MFU/MRU/metadata breakdown, hit ratios, compression ratio, throughput.
 
 Data comes from `/proc/spl/kstat/zfs/arcstats` + `/proc/meminfo` on Linux, `sysctl` on FreeBSD. Pool data is read through `libzfs` directly without parsing `zpool`.
@@ -48,7 +49,7 @@ zftop --help             # all options
 | `1` `2` `3` `4` | Overview / Pools / Datasets / ARC |
 | `Tab` / `Shift+Tab` | cycle tabs |
 | `↑↓` / `jk` | select row |
-| `←→` / `hl` | (Datasets) collapse / expand |
+| `←→` / `hl` | (Datasets/Pools) collapse / expand |
 | `Enter` | drill into detail |
 | `Esc` | back to list / tree |
 
@@ -87,6 +88,7 @@ zftop is a finishable project (or at least everything up until fleet mode, which
 - **v0.1** ARC dashboard ✓
 - **v0.2** Pools: capacity, health, vdev trees, scrub status ✓
 - **v0.3** Datasets: tree view, properties, quota usage ✓
+- **v0.3.1** Pools: tree view, vdev expand/collapse, device paths, R/W/C breakdown ✓
 - **v0.4** Snapshots, with Sanoid retention awareness
 - **v0.5** SMART health joined to vdev members
 - **v1.0** Remote/fleet mode over SSH

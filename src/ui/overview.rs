@@ -14,14 +14,14 @@
 //!     │  ...                             │
 //!     └──────────────────────────────────┘
 
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
-use ratatui::Frame;
 
 use super::widgets;
-use crate::app::{format_bytes, App};
+use crate::app::{App, format_bytes};
 use crate::pools::ScrubState;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
@@ -44,11 +44,8 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_arc_section(frame: &mut Frame, area: Rect, app: &App) {
     // Gauge takes 3 rows (title + filled bar + bottom border); summary is 1.
-    let [gauge_area, summary_area] = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Length(1),
-    ])
-    .areas(area);
+    let [gauge_area, summary_area] =
+        Layout::vertical([Constraint::Length(3), Constraint::Length(1)]).areas(area);
     widgets::draw_arc_gauge(frame, gauge_area, app);
 
     let overall = app.hit_ratio_overall();
@@ -57,11 +54,9 @@ fn draw_arc_section(frame: &mut Frame, area: Rect, app: &App) {
         .throughput_hits()
         .map(|h| format!("{h}/s"))
         .unwrap_or_else(|| "—".to_string());
-    let summary = Paragraph::new(Line::from(vec![
-        Span::raw(format!(
-            "Overall {overall:.1}%    Demand {demand:.1}%    Hits {hits}"
-        )),
-    ]))
+    let summary = Paragraph::new(Line::from(vec![Span::raw(format!(
+        "Overall {overall:.1}%    Demand {demand:.1}%    Hits {hits}"
+    ))]))
     .alignment(Alignment::Center);
     frame.render_widget(summary, summary_area);
 }
@@ -215,8 +210,8 @@ mod tests {
     use crate::pools::{
         ErrorCounts, PoolHealth, PoolInfo, ScrubState, VdevKind, VdevNode, VdevState,
     };
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::path::PathBuf;
 
     fn test_pool(name: &str, health: PoolHealth, size: u64, alloc: u64) -> PoolInfo {
@@ -236,6 +231,7 @@ mod tests {
                 size_bytes: Some(size),
                 errors: ErrorCounts::default(),
                 children: vec![],
+                device_path: None,
             },
         }
     }
@@ -251,12 +247,10 @@ mod tests {
             let p = arcstats_path.clone();
             Box::new(move || arcstats::linux::from_procfs_path(&p))
         };
-        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
-            meminfo::linux::LinuxMemSource::new(meminfo_path),
-        ));
-        let mut app =
-            App::new(arc_reader, mem, pools_source, pools_init_error, None, None)
-                .expect("fixture App::new");
+        let mem: Option<Box<dyn MemSource>> =
+            Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
+        let mut app = App::new(arc_reader, mem, pools_source, pools_init_error, None, None)
+            .expect("fixture App::new");
         app.current_tab = Tab::Overview;
         app.pools_snapshot = pools;
         app
@@ -285,9 +279,12 @@ mod tests {
 
     #[test]
     fn overview_shows_system_ram_and_arc_and_pools_blocks() {
-        let pools = vec![
-            test_pool("tank", PoolHealth::Online, 1_000_000_000, 500_000_000),
-        ];
+        let pools = vec![test_pool(
+            "tank",
+            PoolHealth::Online,
+            1_000_000_000,
+            500_000_000,
+        )];
         let app = app_for_overview(
             pools.clone(),
             Some(Box::new(FakePoolsSource::new(pools))),
@@ -313,11 +310,7 @@ mod tests {
 
     #[test]
     fn overview_shows_no_pools_when_snapshot_empty() {
-        let app = app_for_overview(
-            vec![],
-            Some(Box::new(FakePoolsSource::new(vec![]))),
-            None,
-        );
+        let app = app_for_overview(vec![], Some(Box::new(FakePoolsSource::new(vec![]))), None);
         let out = render_overview(&app);
         assert!(
             out.contains("no pools imported"),
@@ -335,9 +328,12 @@ mod tests {
     fn overview_capacity_cell_has_matching_parens() {
         // 500M / 1G → "(50%)". Two-digit percent so the 25-char worst case
         // for GiB-ish sizes is exercised.
-        let pools = vec![
-            test_pool("tank", PoolHealth::Online, 1_000_000_000, 500_000_000),
-        ];
+        let pools = vec![test_pool(
+            "tank",
+            PoolHealth::Online,
+            1_000_000_000,
+            500_000_000,
+        )];
         let app = app_for_overview(
             pools.clone(),
             Some(Box::new(FakePoolsSource::new(pools))),
@@ -367,9 +363,7 @@ mod tests {
     fn overview_capacity_cell_survives_tib_pool_at_100pct() {
         const TIB: u64 = 1024u64.pow(4);
         let bytes = 1023 * TIB; // produces "1023.0 TiB" via format_bytes
-        let pools = vec![
-            test_pool("bigpool", PoolHealth::Online, bytes, bytes),
-        ];
+        let pools = vec![test_pool("bigpool", PoolHealth::Online, bytes, bytes)];
         let app = app_for_overview(
             pools.clone(),
             Some(Box::new(FakePoolsSource::new(pools))),

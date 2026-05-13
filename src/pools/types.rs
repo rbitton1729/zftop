@@ -7,6 +7,7 @@
 
 use std::time::SystemTime;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct PoolInfo {
     pub name: String,
@@ -39,7 +40,12 @@ impl PoolInfo {
             .root_vdev
             .children
             .iter()
-            .filter(|v| !matches!(v.kind, VdevKind::LogGroup | VdevKind::CacheGroup | VdevKind::SpareGroup))
+            .filter(|v| {
+                !matches!(
+                    v.kind,
+                    VdevKind::LogGroup | VdevKind::CacheGroup | VdevKind::SpareGroup
+                )
+            })
             .collect();
 
         if tops.is_empty() {
@@ -48,12 +54,12 @@ impl PoolInfo {
 
         // Single top-level vdev.
         if tops.len() == 1 {
-            return label_for_vdev(&tops[0]);
+            return label_for_vdev(tops[0]);
         }
 
         // Multiple top-level vdevs — if they're all the same type, use that
         // label (e.g. 3x mirror = "Mirror"). Otherwise "Mixed".
-        let first = label_for_vdev(&tops[0]);
+        let first = label_for_vdev(tops[0]);
         if tops[1..].iter().all(|v| label_for_vdev(v) == first) {
             first
         } else {
@@ -123,6 +129,12 @@ pub struct VdevNode {
     pub size_bytes: Option<u64>,
     pub errors: ErrorCounts,
     pub children: Vec<VdevNode>,
+    /// Long device path for leaf disks (`Disk` / `File` / `LogVdev` /
+    /// `CacheVdev` / `SpareVdev` kinds). `None` for interior nodes
+    /// (raidz/mirror/root) and for group headers (logs/cache/spares).
+    /// Read from the `ZPOOL_CONFIG_PATH` nvlist key — same source as
+    /// `name`, just without the `/dev/` strip applied.
+    pub device_path: Option<String>,
 }
 
 impl VdevNode {
@@ -145,6 +157,7 @@ pub enum VdevState {
     Unavail,
 }
 
+#[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum VdevKind {
     /// The pool's root vdev — the parent of every top-level vdev.
@@ -192,6 +205,7 @@ mod tests {
             size_bytes: Some(1024 * 1024 * 1024),
             errors,
             children: vec![],
+            device_path: None,
         }
     }
 
@@ -204,10 +218,32 @@ mod tests {
             size_bytes: None,
             errors: ErrorCounts::default(),
             children: vec![
-                leaf("sda", ErrorCounts { read: 1, write: 0, checksum: 0 }),
-                leaf("sdb", ErrorCounts { read: 0, write: 2, checksum: 0 }),
-                leaf("sdc", ErrorCounts { read: 0, write: 0, checksum: 3 }),
+                leaf(
+                    "sda",
+                    ErrorCounts {
+                        read: 1,
+                        write: 0,
+                        checksum: 0,
+                    },
+                ),
+                leaf(
+                    "sdb",
+                    ErrorCounts {
+                        read: 0,
+                        write: 2,
+                        checksum: 0,
+                    },
+                ),
+                leaf(
+                    "sdc",
+                    ErrorCounts {
+                        read: 0,
+                        write: 0,
+                        checksum: 3,
+                    },
+                ),
             ],
+            device_path: None,
         };
         assert_eq!(node.total_errors(), 6);
     }
@@ -229,9 +265,22 @@ mod tests {
                     size_bytes: Some(2 * 1024 * 1024 * 1024),
                     errors: ErrorCounts::default(),
                     children: vec![
-                        leaf("sda", ErrorCounts { read: 1, ..Default::default() }),
-                        leaf("sdb", ErrorCounts { write: 2, ..Default::default() }),
+                        leaf(
+                            "sda",
+                            ErrorCounts {
+                                read: 1,
+                                ..Default::default()
+                            },
+                        ),
+                        leaf(
+                            "sdb",
+                            ErrorCounts {
+                                write: 2,
+                                ..Default::default()
+                            },
+                        ),
                     ],
+                    device_path: None,
                 },
                 VdevNode {
                     name: "logs".into(),
@@ -241,10 +290,15 @@ mod tests {
                     errors: ErrorCounts::default(),
                     children: vec![leaf(
                         "nvme0n1p1",
-                        ErrorCounts { checksum: 4, ..Default::default() },
+                        ErrorCounts {
+                            checksum: 4,
+                            ..Default::default()
+                        },
                     )],
+                    device_path: None,
                 },
             ],
+            device_path: None,
         };
         assert_eq!(node.total_errors(), 7);
     }

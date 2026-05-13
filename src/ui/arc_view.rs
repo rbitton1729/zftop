@@ -2,13 +2,13 @@
 //! compression, throughput. Owned layout-and-widgets; the parent `ui::draw`
 //! hands this function a `Rect` and gets a rendered ARC screen back.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
-use ratatui::Frame;
 
-use crate::app::{format_bytes, App};
+use crate::app::{App, format_bytes};
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let has_meminfo = app.mem_snapshot.is_some();
@@ -19,19 +19,13 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     // here. Footer is likewise owned by the parent.
     let top_height = if has_meminfo { 6 } else { 3 }; // ram + gauge vs gauge only
 
-    let [top_area, middle_area] = Layout::vertical([
-        Constraint::Length(top_height),
-        Constraint::Min(10),
-    ])
-    .areas(area);
+    let [top_area, middle_area] =
+        Layout::vertical([Constraint::Length(top_height), Constraint::Min(10)]).areas(area);
 
     // -- Top: bars --
     if has_meminfo {
-        let [ram_area, gauge_area] = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Length(3),
-        ])
-        .areas(top_area);
+        let [ram_area, gauge_area] =
+            Layout::vertical([Constraint::Length(3), Constraint::Length(3)]).areas(top_area);
         super::widgets::draw_ram_bar(frame, ram_area, app);
         super::widgets::draw_arc_gauge(frame, gauge_area, app);
     } else {
@@ -39,11 +33,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     // -- Middle: panels side by side --
-    let [left_col, right_col] = Layout::horizontal([
-        Constraint::Percentage(50),
-        Constraint::Percentage(50),
-    ])
-    .areas(middle_area);
+    let [left_col, right_col] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .areas(middle_area);
 
     // Left column: Breakdown table (takes full height)
     draw_breakdown(frame, left_col, app);
@@ -60,11 +52,8 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         draw_compression(frame, compression_area, app);
         draw_throughput(frame, throughput_area, app);
     } else {
-        let [ratios_area, throughput_area] = Layout::vertical([
-            Constraint::Length(7),
-            Constraint::Min(3),
-        ])
-        .areas(right_col);
+        let [ratios_area, throughput_area] =
+            Layout::vertical([Constraint::Length(7), Constraint::Min(3)]).areas(right_col);
         draw_hit_ratios(frame, ratios_area, app);
         draw_throughput(frame, throughput_area, app);
     }
@@ -184,9 +173,18 @@ fn draw_hit_ratios(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_throughput(frame: &mut Frame, area: Rect, app: &App) {
     let dash = "\u{2014}".to_string();
-    let hits = app.throughput_hits().map(format_count).unwrap_or_else(|| dash.clone());
-    let iohits = app.throughput_iohits().map(format_count).unwrap_or_else(|| dash.clone());
-    let misses = app.throughput_misses().map(format_count).unwrap_or_else(|| dash.clone());
+    let hits = app
+        .throughput_hits()
+        .map(format_count)
+        .unwrap_or_else(|| dash.clone());
+    let iohits = app
+        .throughput_iohits()
+        .map(format_count)
+        .unwrap_or_else(|| dash.clone());
+    let misses = app
+        .throughput_misses()
+        .map(format_count)
+        .unwrap_or_else(|| dash.clone());
 
     let text = Line::from(vec![
         Span::styled("Hits/s: ", Style::default().fg(Color::Green)),
@@ -199,8 +197,8 @@ fn draw_throughput(frame: &mut Frame, area: Rect, app: &App) {
         Span::raw(&misses),
     ]);
 
-    let paragraph = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title("Throughput"));
+    let paragraph =
+        Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Throughput"));
     frame.render_widget(paragraph, area);
 }
 
@@ -220,9 +218,9 @@ mod tests {
     use crate::app::App;
     use crate::arcstats;
     use crate::meminfo::{self, MemSource};
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::Terminal;
     use std::path::PathBuf;
 
     /// Serialize a rendered buffer to a newline-joined string of glyphs.
@@ -252,9 +250,8 @@ mod tests {
             let p = arcstats_path.clone();
             Box::new(move || arcstats::linux::from_procfs_path(&p))
         };
-        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
-            meminfo::linux::LinuxMemSource::new(meminfo_path),
-        ));
+        let mem: Option<Box<dyn MemSource>> =
+            Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
         App::new(arc_reader, mem, None, None, None, None).expect("fixture App::new")
     }
 

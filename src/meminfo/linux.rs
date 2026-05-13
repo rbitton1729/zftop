@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use super::{MemSnapshot, MemSource, RamSegment};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MemInfo {
     pub total: u64,
@@ -22,8 +23,8 @@ pub struct MemInfo {
 
 impl MemInfo {
     pub fn from_path(path: &Path) -> Result<Self> {
-        let content =
-            fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
         Self::parse(&content)
     }
 
@@ -190,8 +191,16 @@ mod tests {
         let arc_size: u64 = 7 * 1024 * 1024 * 1024; // 7 GiB
         let arc_ovh: u64 = 1024 * 1024 * 1024; // 1 GiB
         let arc_segs = vec![
-            RamSegment { label: "ARC", color: Color::Magenta, bytes: arc_size },
-            RamSegment { label: "ARC ovh", color: Color::Indexed(53), bytes: arc_ovh },
+            RamSegment {
+                label: "ARC",
+                color: Color::Magenta,
+                bytes: arc_size,
+            },
+            RamSegment {
+                label: "ARC ovh",
+                color: Color::Indexed(53),
+                bytes: arc_ovh,
+            },
         ];
         let snap = src.snapshot(&arc_segs).unwrap();
         assert_eq!(snap.total_bytes, 32_768_000 * 1024);
@@ -209,6 +218,9 @@ mod tests {
 
         assert_eq!(snap.segments[3].label, "Buf/Cache");
         // Buf/Cache = (buffers + cached + s_reclaimable) * 1024
-        assert_eq!(snap.segments[3].bytes, (512_000 + 2_048_000 + 1_024_000) * 1024);
+        assert_eq!(
+            snap.segments[3].bytes,
+            (512_000 + 2_048_000 + 1_024_000) * 1024
+        );
     }
 }

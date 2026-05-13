@@ -1,18 +1,18 @@
 //! Datasets tab — tree view. Renders the flattened visible-row list as
 //! a Table with depth-indented names and expand/collapse glyphs.
-//! Selection highlight uses bg(DarkGray)+Bold (matches pools_list.rs)
+//! Selection highlight uses bg(DarkGray)+Bold (matches pools_tree.rs)
 //! to preserve cell-specific styling on selected rows. Wide layout
 //! (≥90 cols) shows USED/REFER/AVAIL/COMPRESS; narrow drops AVAIL +
 //! COMPRESS.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Row, Table};
-use ratatui::Frame;
 
 use super::widgets;
-use crate::app::{format_bytes, App, DatasetsView};
+use crate::app::{App, DatasetsView, format_bytes};
 use crate::datasets::{DatasetKind, DatasetNode};
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
@@ -54,8 +54,13 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, (depth, node))| {
-            build_row(node, *depth, expanded.contains(&node.name),
-                      i == selected_idx, wide)
+            build_row(
+                node,
+                *depth,
+                expanded.contains(&node.name),
+                i == selected_idx,
+                wide,
+            )
         })
         .collect();
 
@@ -160,12 +165,12 @@ mod tests {
     use super::*;
     use crate::app::{App, Tab};
     use crate::arcstats;
+    use crate::datasets::DatasetsSource;
     use crate::datasets::fake::FakeDatasetsSource;
     use crate::datasets::types::{DatasetKind, DatasetProperties};
-    use crate::datasets::DatasetsSource;
     use crate::meminfo::{self, MemSource};
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::path::PathBuf;
 
     fn fs(name: &str, children: Vec<DatasetNode>) -> DatasetNode {
@@ -205,8 +210,8 @@ mod tests {
             Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
         let ds_source: Option<Box<dyn DatasetsSource>> =
             Some(Box::new(FakeDatasetsSource::new(roots.clone())));
-        let mut app = App::new(arc_reader, mem, None, None, ds_source, init_error)
-            .expect("fixture App::new");
+        let mut app =
+            App::new(arc_reader, mem, None, None, ds_source, init_error).expect("fixture App::new");
         app.current_tab = Tab::Datasets;
         app.datasets_snapshot = roots.clone();
         if let DatasetsView::Tree { expanded, .. } = &mut app.datasets_view {
@@ -264,16 +269,19 @@ mod tests {
     fn narrow_layout_drops_avail_and_compress() {
         let app = app_for_datasets(vec![fs("tank", vec![])], None);
         let out = render(&app, 80, 24);
-        assert!(!out.contains(" AVAIL "), "narrow layout should not show AVAIL");
-        assert!(!out.contains("COMPRESS"), "narrow layout should not show COMPRESS");
+        assert!(
+            !out.contains(" AVAIL "),
+            "narrow layout should not show AVAIL"
+        );
+        assert!(
+            !out.contains("COMPRESS"),
+            "narrow layout should not show COMPRESS"
+        );
     }
 
     #[test]
     fn expanded_root_shows_expand_glyph() {
-        let app = app_for_datasets(
-            vec![fs("tank", vec![fs("tank/home", vec![])])],
-            None,
-        );
+        let app = app_for_datasets(vec![fs("tank", vec![fs("tank/home", vec![])])], None);
         let out = render(&app, 100, 24);
         assert!(out.contains("▼"), "expanded root should show ▼ glyph");
     }
@@ -302,15 +310,15 @@ mod tests {
             .lines()
             .find(|l| l.contains("tank/swap"))
             .expect("missing zvol row");
-        assert!(line.contains(" V "), "zvol row should have V glyph: {line:?}");
+        assert!(
+            line.contains(" V "),
+            "zvol row should have V glyph: {line:?}"
+        );
     }
 
     #[test]
     fn selection_marker_on_selected_row() {
-        let mut app = app_for_datasets(
-            vec![fs("tank", vec![fs("tank/home", vec![])])],
-            None,
-        );
+        let mut app = app_for_datasets(vec![fs("tank", vec![fs("tank/home", vec![])])], None);
         if let DatasetsView::Tree { selected, .. } = &mut app.datasets_view {
             *selected = 1;
         }
@@ -319,7 +327,10 @@ mod tests {
             .lines()
             .find(|l| l.contains("tank/home"))
             .expect("missing tank/home row");
-        assert!(line.contains('>'), "selected row missing > marker: {line:?}");
+        assert!(
+            line.contains('>'),
+            "selected row missing > marker: {line:?}"
+        );
     }
 
     #[test]
@@ -346,7 +357,9 @@ mod tests {
         // Indentation is expressed as spaces *before* the dataset name within
         // the name cell. Measure the byte position of the name in the line —
         // deeper nodes have more leading spaces so the name starts further right.
-        let alice_pos = alice_line.find("tank/home/alice").expect("alice name missing");
+        let alice_pos = alice_line
+            .find("tank/home/alice")
+            .expect("alice name missing");
         let home_pos = home_line.find("tank/home").expect("home name missing");
         assert!(
             alice_pos > home_pos,

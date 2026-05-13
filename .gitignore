@@ -18,7 +18,9 @@ Thumbs.db
 # Environment
 .env
 .claude/
+.hermes/
 CLAUDE.md
 
 # Local design/planning scratch (not project deliverables)
 docs/
+plans/

@@ -17,7 +17,7 @@
 //!    b. Read size / free / allocated / fragmentation via `zpool_get_prop_int`.
 //!    c. Read the pool config nvlist via `zpool_get_config`.
 //!    d. Look up `vdev_tree` nvlist inside the config and recursively walk
-//!       it into a `VdevNode`, filling in vdev_stats for each level.
+//!    it into a `VdevNode`, filling in vdev_stats for each level.
 //!    e. Read `scan_stats` off the root vdev nvlist for `ScrubState`.
 //!    f. Close the handle with `zpool_close`.
 //! 3. Replace `self.snapshot` with the freshly built `Vec<PoolInfo>`.
@@ -28,16 +28,14 @@
 //! handle is closed so the `PoolInfo` values returned to callers are
 //! standalone.
 
-use anyhow::{anyhow, Result};
-use std::ffi::{c_int, c_uint, c_void, CStr};
+use anyhow::{Result, anyhow};
+use std::ffi::{CStr, c_int, c_uint, c_void};
 use std::ptr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::ffi::{self, Libzfs};
-use super::types::{
-    ErrorCounts, PoolHealth, PoolInfo, ScrubState, VdevKind, VdevNode, VdevState,
-};
 use super::PoolsSource;
+use super::ffi::{self, Libzfs};
+use super::types::{ErrorCounts, PoolHealth, PoolInfo, ScrubState, VdevKind, VdevNode, VdevState};
 
 /// Owns a runtime-loaded `Libzfs` (dlopen handles + function pointers) and
 /// a `*mut libzfs_handle_t` from `libzfs_init`. Dropping this value calls
@@ -176,10 +174,7 @@ impl PoolsSource for LibzfsPoolsSource {
 // no libzfs refs — it doesn't need access to `Libzfs`.
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn collect_handle(
-    zhp: *mut ffi::zpool_handle_t,
-    data: *mut c_void,
-) -> c_int {
+unsafe extern "C" fn collect_handle(zhp: *mut ffi::zpool_handle_t, data: *mut c_void) -> c_int {
     // SAFETY: `data` was passed in as `&mut Vec<...> as *mut c_void` by
     // `refresh()` above; cast it back. The Vec outlives this callback
     // (it lives on the caller's stack for the duration of zpool_iter).
@@ -209,17 +204,14 @@ fn build_pool_info(lz: &Libzfs, zhp: *mut ffi::zpool_handle_t) -> Result<PoolInf
     // Properties via zpool_get_prop_int.
     // SAFETY: zhp is non-null, valid for the duration of this function,
     // and the prop enum values are hand-copied from sys/fs/zfs.h.
-    let size_bytes =
-        unsafe { (lz.zpool_get_prop_int)(zhp, ffi::ZPOOL_PROP_SIZE, ptr::null_mut()) };
+    let size_bytes = unsafe { (lz.zpool_get_prop_int)(zhp, ffi::ZPOOL_PROP_SIZE, ptr::null_mut()) };
     let allocated_bytes =
         unsafe { (lz.zpool_get_prop_int)(zhp, ffi::ZPOOL_PROP_ALLOCATED, ptr::null_mut()) };
-    let free_bytes =
-        unsafe { (lz.zpool_get_prop_int)(zhp, ffi::ZPOOL_PROP_FREE, ptr::null_mut()) };
+    let free_bytes = unsafe { (lz.zpool_get_prop_int)(zhp, ffi::ZPOOL_PROP_FREE, ptr::null_mut()) };
     // Fragmentation is a percentage 0..=100, or a sentinel (u64::MAX) when
     // unavailable. Store as `Option<u8>`.
-    let frag_raw = unsafe {
-        (lz.zpool_get_prop_int)(zhp, ffi::ZPOOL_PROP_FRAGMENTATION, ptr::null_mut())
-    };
+    let frag_raw =
+        unsafe { (lz.zpool_get_prop_int)(zhp, ffi::ZPOOL_PROP_FRAGMENTATION, ptr::null_mut()) };
     let fragmentation_pct = if frag_raw <= 100 {
         Some(frag_raw as u8)
     } else {
@@ -288,19 +280,13 @@ fn derive_pool_health(root: &VdevNode) -> PoolHealth {
 /// Top-level walker. The vdev_tree nvlist IS the pool's root vdev; its
 /// children are the top-level vdevs (raidz groups, mirrors, single disks,
 /// log/cache/spare groups). Each child is walked via `walk_child_vdev`.
-fn walk_root_vdev(
-    lz: &Libzfs,
-    nvl: *mut ffi::nvlist_t,
-    pool_name: &str,
-) -> Result<VdevNode> {
+fn walk_root_vdev(lz: &Libzfs, nvl: *mut ffi::nvlist_t, pool_name: &str) -> Result<VdevNode> {
     let (state, errors) = read_vdev_stats(lz, nvl);
     let size_bytes =
         read_vdev_stats_raw(lz, nvl).and_then(|stats| stats.get(ffi::VS_IDX_SPACE).copied());
 
     let mut children = Vec::new();
-    if let Ok((child_nvls, count)) =
-        nvlist_get_nvlist_array(lz, nvl, ffi::ZPOOL_CONFIG_CHILDREN)
-    {
+    if let Ok((child_nvls, count)) = nvlist_get_nvlist_array(lz, nvl, ffi::ZPOOL_CONFIG_CHILDREN) {
         for i in 0..count {
             // SAFETY: libzfs returned an nvlist_t** + element count. Indices
             // 0..count are valid nvlist pointers for the lifetime of the
@@ -323,6 +309,7 @@ fn walk_root_vdev(
         size_bytes,
         errors,
         children,
+        device_path: None,
     })
 }
 
@@ -339,14 +326,11 @@ fn walk_child_vdev(
     let kind = match (parent_group, type_str.as_str()) {
         (_, ffi::VDEV_TYPE_MIRROR) => VdevKind::Mirror,
         (_, ffi::VDEV_TYPE_RAIDZ | ffi::VDEV_TYPE_DRAID) => {
-            let parity = nvlist_get_uint64(lz, nvl, ffi::ZPOOL_CONFIG_NPARITY)
-                .unwrap_or(1) as u8;
+            let parity = nvlist_get_uint64(lz, nvl, ffi::ZPOOL_CONFIG_NPARITY).unwrap_or(1) as u8;
             VdevKind::Raidz { parity }
         }
         (_, ffi::VDEV_TYPE_REPLACING) => VdevKind::Mirror,
-        (Some(VdevKind::LogGroup), ffi::VDEV_TYPE_DISK | ffi::VDEV_TYPE_FILE) => {
-            VdevKind::LogVdev
-        }
+        (Some(VdevKind::LogGroup), ffi::VDEV_TYPE_DISK | ffi::VDEV_TYPE_FILE) => VdevKind::LogVdev,
         (Some(VdevKind::CacheGroup), ffi::VDEV_TYPE_DISK | ffi::VDEV_TYPE_FILE) => {
             VdevKind::CacheVdev
         }
@@ -358,26 +342,30 @@ fn walk_child_vdev(
         (_, _) => VdevKind::Disk, // fallback for unknown types
     };
 
-    // Display name. Leaf disks/files get their `path` (stripped of "/dev/"
-    // prefix for readability). Groups/RAIDZ/Mirror inherit the type_str
-    // as their label.
-    let name = match kind {
+    // Read the raw path once. Leaves get both a stripped `name` (for
+    // compact display) and the full `device_path` (for the v0.3.1 tree
+    // view's wide-layout DEVICE_PATH column). Interior vdevs and group
+    // headers get only `name` from `type_str` and `device_path = None`.
+    let (name, device_path) = match kind {
         VdevKind::Disk
         | VdevKind::File
         | VdevKind::LogVdev
         | VdevKind::CacheVdev
-        | VdevKind::SpareVdev => nvlist_get_string(lz, nvl, ffi::ZPOOL_CONFIG_PATH)
-            .map(|p| p.strip_prefix("/dev/").unwrap_or(&p).to_string())
-            .unwrap_or_else(|_| type_str.clone()),
-        _ => type_str.clone(),
+        | VdevKind::SpareVdev => match nvlist_get_string(lz, nvl, ffi::ZPOOL_CONFIG_PATH) {
+            Ok(full) => {
+                let stripped = full.strip_prefix("/dev/").unwrap_or(&full).to_string();
+                (stripped, Some(full))
+            }
+            Err(_) => (type_str.clone(), None),
+        },
+        _ => (type_str.clone(), None),
     };
 
     let (state, errors) = read_vdev_stats(lz, nvl);
 
     let size_bytes = match kind {
         VdevKind::LogGroup | VdevKind::CacheGroup | VdevKind::SpareGroup => None,
-        _ => read_vdev_stats_raw(lz, nvl)
-            .and_then(|stats| stats.get(ffi::VS_IDX_SPACE).copied()),
+        _ => read_vdev_stats_raw(lz, nvl).and_then(|stats| stats.get(ffi::VS_IDX_SPACE).copied()),
     };
 
     // Recurse on children. Group-context for leaves propagates down.
@@ -387,9 +375,7 @@ fn walk_child_vdev(
     };
 
     let mut children = Vec::new();
-    if let Ok((child_nvls, count)) =
-        nvlist_get_nvlist_array(lz, nvl, ffi::ZPOOL_CONFIG_CHILDREN)
-    {
+    if let Ok((child_nvls, count)) = nvlist_get_nvlist_array(lz, nvl, ffi::ZPOOL_CONFIG_CHILDREN) {
         for i in 0..count {
             // SAFETY: same as walk_root_vdev's recursion.
             let child_nvl = unsafe { *child_nvls.add(i) };
@@ -410,6 +396,7 @@ fn walk_child_vdev(
         size_bytes,
         errors,
         children,
+        device_path,
     })
 }
 
@@ -535,11 +522,11 @@ fn decode_scan_state(stats: &[u64], now_secs: u64) -> ScrubState {
             } else {
                 (examined, to_examine)
             };
-            let progress_pct = if denominator == 0 {
-                0
-            } else {
-                ((numerator.saturating_mul(100)) / denominator).min(100) as u8
-            };
+            let progress_pct = numerator
+                .saturating_mul(100)
+                .checked_div(denominator)
+                .unwrap_or(0)
+                .min(100) as u8;
 
             // Speed/ETA: same modern/legacy split. The modern path mirrors
             // zpool_main.c's `pass_elapsed = MAX(1, now - pass_start -
@@ -623,11 +610,7 @@ fn map_vdev_state(v: u64) -> VdevState {
 // returning `anyhow::Error` on libzfs-reported failures.
 // ---------------------------------------------------------------------------
 
-fn nvlist_get_string(
-    lz: &Libzfs,
-    nvl: *const ffi::nvlist_t,
-    key: &CStr,
-) -> Result<String> {
+fn nvlist_get_string(lz: &Libzfs, nvl: *const ffi::nvlist_t, key: &CStr) -> Result<String> {
     let mut out: *const std::ffi::c_char = ptr::null();
     // SAFETY: nvl is a valid nvlist_t borrowed from libzfs; the key is
     // nul-terminated (CStr contract); out is a writable slot only read
@@ -641,7 +624,9 @@ fn nvlist_get_string(
     }
     // SAFETY: libzfs guarantees the returned string is nul-terminated and
     // lives at least as long as the parent nvlist (which outlives this call).
-    let s = unsafe { CStr::from_ptr(out) }.to_string_lossy().into_owned();
+    let s = unsafe { CStr::from_ptr(out) }
+        .to_string_lossy()
+        .into_owned();
     Ok(s)
 }
 
@@ -684,9 +669,8 @@ fn nvlist_get_nvlist_array(
     let mut out_ptr: *mut *mut ffi::nvlist_t = ptr::null_mut();
     let mut nelem: c_uint = 0;
     // SAFETY: nvl + key are valid; out-slots are writable.
-    let rc = unsafe {
-        (lz.nvlist_lookup_nvlist_array)(nvl, key.as_ptr(), &mut out_ptr, &mut nelem)
-    };
+    let rc =
+        unsafe { (lz.nvlist_lookup_nvlist_array)(nvl, key.as_ptr(), &mut out_ptr, &mut nelem) };
     if rc != 0 || out_ptr.is_null() {
         return Err(anyhow!(
             "nvlist_lookup_nvlist_array({}) failed: rc={rc}",
@@ -712,6 +696,7 @@ mod tests {
     /// Build a 15-element (OpenZFS 0.8+) scan_stats array with the fields
     /// we set by name; unset indices stay zero. Keeps the tests below from
     /// drowning in `stats[N] = ...` noise.
+    #[allow(clippy::too_many_arguments)]
     fn build_modern_scan_stats(
         func: u64,
         state: u64,
@@ -823,7 +808,7 @@ mod tests {
             ffi::DSS_SCANNING,
             start,
             500 * GIB, // to_examine
-            1 * GIB,   // examined — metadata walk just starting
+            GIB,       // examined — metadata walk just starting
             0,
             start,
             0,
@@ -923,10 +908,7 @@ mod tests {
                 completed_at,
             } => {
                 assert_eq!(errors_repaired, 7);
-                let secs = completed_at
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
+                let secs = completed_at.duration_since(UNIX_EPOCH).unwrap().as_secs();
                 assert_eq!(secs, 1_700_000_000);
             }
             other => panic!("expected Finished, got {other:?}"),

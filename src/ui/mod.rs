@@ -1,12 +1,11 @@
 //! Top-level UI entry. Owns the tab strip, per-tab dispatch, and the footer.
-//! Tab content rendering is delegated to per-tab modules (v0.2b: only
-//! `arc_view` has real content; Overview and Pools are placeholders).
+//! Tab content rendering is delegated to per-tab modules.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::{App, DatasetsView, PoolsView, Tab};
 
@@ -15,7 +14,7 @@ mod datasets_detail;
 mod datasets_tree;
 mod overview;
 mod pools_detail;
-mod pools_list;
+mod pools_tree;
 mod widgets;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -33,8 +32,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     match app.current_tab {
         Tab::Arc => arc_view::draw(frame, content_area, app),
         Tab::Overview => overview::draw(frame, content_area, app),
-        Tab::Pools => match app.pools_view {
-            PoolsView::List { .. } => pools_list::draw(frame, content_area, app),
+        Tab::Pools => match &app.pools_view {
+            PoolsView::Tree { .. } => pools_tree::draw(frame, content_area, app),
             PoolsView::Detail { .. } => pools_detail::draw(frame, content_area, app),
         },
         Tab::Datasets => match &app.datasets_view {
@@ -121,13 +120,15 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("r", Style::default().fg(Color::Yellow)),
             Span::raw(": refresh"),
         ]),
-        (Tab::Pools, PoolsView::List { .. }, _) => Line::from(vec![
+        (Tab::Pools, PoolsView::Tree { .. }, _) => Line::from(vec![
             Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(": quit  "),
             Span::styled("1/2/3/4", Style::default().fg(Color::Yellow)),
             Span::raw(": tabs  "),
             Span::styled("↑↓", Style::default().fg(Color::Yellow)),
             Span::raw(": select  "),
+            Span::styled("←→", Style::default().fg(Color::Yellow)),
+            Span::raw(": collapse/expand  "),
             Span::styled("enter", Style::default().fg(Color::Yellow)),
             Span::raw(": details  "),
             Span::styled("r", Style::default().fg(Color::Yellow)),
@@ -161,8 +162,8 @@ mod tests {
     use crate::app::App;
     use crate::arcstats;
     use crate::meminfo::{self, MemSource};
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use std::path::PathBuf;
 
     fn app_from_fixtures_on_tab(tab: Tab) -> App {
@@ -172,9 +173,8 @@ mod tests {
             let p = arcstats_path.clone();
             Box::new(move || arcstats::linux::from_procfs_path(&p))
         };
-        let mem: Option<Box<dyn MemSource>> = Some(Box::new(
-            meminfo::linux::LinuxMemSource::new(meminfo_path),
-        ));
+        let mem: Option<Box<dyn MemSource>> =
+            Some(Box::new(meminfo::linux::LinuxMemSource::new(meminfo_path)));
         let mut app = App::new(arc_reader, mem, None, None, None, None).expect("fixture App::new");
         app.current_tab = tab;
         app
@@ -260,11 +260,11 @@ mod tests {
     }
 
     #[test]
-    fn footer_on_pools_list_shows_selection_keys() {
+    fn footer_on_pools_tree_shows_collapse_expand_keys() {
         let app = app_from_fixtures_on_tab(Tab::Pools);
         let terminal = draw_and_collect(&app, 80, 24);
         let last = row_text(terminal.backend(), 23);
-        assert!(last.contains("select"), "footer = {last:?}");
+        assert!(last.contains("collapse/expand"), "footer = {last:?}");
         assert!(last.contains("enter"), "footer = {last:?}");
         assert!(last.contains("details"), "footer = {last:?}");
     }
@@ -272,8 +272,12 @@ mod tests {
     #[test]
     fn footer_on_pools_detail_shows_esc_back() {
         use crate::app::PoolsView;
+        use std::collections::BTreeSet;
         let mut app = app_from_fixtures_on_tab(Tab::Pools);
-        app.pools_view = PoolsView::Detail { pool_index: 0 };
+        app.pools_view = PoolsView::Detail {
+            pool_index: 0,
+            expanded: BTreeSet::new(),
+        };
         let terminal = draw_and_collect(&app, 80, 24);
         let last = row_text(terminal.backend(), 23);
         assert!(last.contains("esc"), "footer = {last:?}");
