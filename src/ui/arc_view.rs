@@ -173,6 +173,10 @@ fn draw_hit_ratios(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_throughput(frame: &mut Frame, area: Rect, app: &App) {
     let dash = "\u{2014}".to_string();
+    let reads = app
+        .throughput_reads()
+        .map(format_count)
+        .unwrap_or_else(|| dash.clone());
     let hits = app
         .throughput_hits()
         .map(format_count)
@@ -185,17 +189,51 @@ fn draw_throughput(frame: &mut Frame, area: Rect, app: &App) {
         .throughput_misses()
         .map(format_count)
         .unwrap_or_else(|| dash.clone());
+    let demand = app
+        .throughput_demand_reads()
+        .map(format_count)
+        .unwrap_or_else(|| dash.clone());
+    let demand_data = app
+        .throughput_demand_data_reads()
+        .map(format_count)
+        .unwrap_or_else(|| dash.clone());
+    let demand_metadata = app
+        .throughput_demand_metadata_reads()
+        .map(format_count)
+        .unwrap_or_else(|| dash.clone());
+    let prefetch = app
+        .throughput_prefetch_reads()
+        .map(format_count)
+        .unwrap_or_else(|| dash.clone());
 
-    let text = Line::from(vec![
-        Span::styled("Hits/s: ", Style::default().fg(Color::Green)),
-        Span::raw(&hits),
-        Span::raw("    "),
-        Span::styled("IO hits/s: ", Style::default().fg(Color::Yellow)),
-        Span::raw(&iohits),
-        Span::raw("    "),
-        Span::styled("Misses/s: ", Style::default().fg(Color::Red)),
-        Span::raw(&misses),
-    ]);
+    let text = vec![
+        Line::from(vec![
+            Span::styled("Read/s: ", Style::default().fg(Color::Cyan)),
+            Span::raw(&reads),
+            Span::raw("    "),
+            Span::styled("Hits/s: ", Style::default().fg(Color::Green)),
+            Span::raw(&hits),
+            Span::raw("    "),
+            Span::styled("IO hits/s: ", Style::default().fg(Color::Yellow)),
+            Span::raw(&iohits),
+            Span::raw("    "),
+            Span::styled("Misses/s: ", Style::default().fg(Color::Red)),
+            Span::raw(&misses),
+        ]),
+        Line::from(vec![
+            Span::styled("Demand/s: ", Style::default().fg(Color::Cyan)),
+            Span::raw(&demand),
+            Span::raw("    "),
+            Span::styled("DData/s: ", Style::default().fg(Color::Green)),
+            Span::raw(&demand_data),
+            Span::raw("    "),
+            Span::styled("DMeta/s: ", Style::default().fg(Color::Green)),
+            Span::raw(&demand_metadata),
+            Span::raw("    "),
+            Span::styled("Pref/s: ", Style::default().fg(Color::Magenta)),
+            Span::raw(&prefetch),
+        ]),
+    ];
 
     let paragraph =
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Throughput"));

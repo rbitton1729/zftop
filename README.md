@@ -23,7 +23,7 @@ Already have it? `zftop --upgrade` will print the update command.
 
 ## What it shows
 
-Four tabs, refreshing once a second:
+Four tabs. ARC/RAM counters refresh once a second by default; slower libzfs-backed pool/dataset snapshots refresh every 5 seconds so they do not skew ARC throughput sampling:
 
 - **Overview** — RAM bar, ARC gauge + hit ratios, pool health/capacity at a glance.
 - **Pools** — expandable tree of pools and their vdevs. `←/→` collapse/expand each pool. Pool rows show health, capacity, frag, scrub state, errors. Vdev rows show state, kind, size, device path, and per-vdev R/W/C error counts. `Enter` drills into a per-pool detail page (scrub progress, future SMART rollup).

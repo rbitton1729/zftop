@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::ExecutableCommand;
@@ -30,6 +30,7 @@ use meminfo::MemSource;
 use pools::PoolsSource;
 
 const DEFAULT_SOURCE: &str = "/proc/spl/kstat/zfs/arcstats";
+const SLOW_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 fn main() -> Result<()> {
     let (source, meminfo_source, interval) = parse_args();
@@ -211,6 +212,14 @@ fn is_default_source(source: &Path) -> bool {
     }
 }
 
+fn refresh_for_tick(app: &mut App, last_slow_refresh: &mut Instant) {
+    let _ = app.refresh_arc();
+    if last_slow_refresh.elapsed() >= SLOW_REFRESH_INTERVAL {
+        app.refresh_slow();
+        *last_slow_refresh = Instant::now();
+    }
+}
+
 #[cfg(unix)]
 fn run(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -218,6 +227,7 @@ fn run(
     interval: Duration,
     suspend_flag: Arc<AtomicBool>,
 ) -> Result<()> {
+    let mut last_slow_refresh = Instant::now();
     loop {
         terminal.draw(|frame| ui::draw(frame, app))?;
 
@@ -245,7 +255,7 @@ fn run(
                 _ => {}
             },
             Ok(false) => {
-                app.refresh().ok();
+                refresh_for_tick(app, &mut last_slow_refresh);
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e.into()),
@@ -263,6 +273,7 @@ fn run(
     app: &mut App,
     interval: Duration,
 ) -> Result<()> {
+    let mut last_slow_refresh = Instant::now();
     loop {
         terminal.draw(|frame| ui::draw(frame, app))?;
 
@@ -273,7 +284,7 @@ fn run(
                 _ => {}
             }
         } else {
-            app.refresh().ok();
+            refresh_for_tick(app, &mut last_slow_refresh);
         }
 
         if app.should_quit {

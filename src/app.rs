@@ -1,6 +1,7 @@
 // App state and update logic.
 
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
@@ -146,6 +147,8 @@ fn arc_segments(stats: &ArcStats) -> Vec<RamSegment> {
 pub struct App {
     pub current: ArcStats,
     pub previous: Option<ArcStats>,
+    current_sample_at: Instant,
+    previous_sample_at: Option<Instant>,
     /// Closure that reads a fresh `ArcStats` snapshot. Constructed in `main.rs`
     /// per OS — Linux wraps a procfs path, FreeBSD wraps a sysctl call.
     arc_reader: Box<dyn FnMut() -> Result<ArcStats>>,
@@ -202,11 +205,14 @@ impl App {
         datasets_init_error: Option<String>,
     ) -> Result<Self> {
         let current = arc_reader()?;
+        let current_sample_at = Instant::now();
         let arc_segs = arc_segments(&current);
         let mem_snapshot = mem_source.as_mut().and_then(|s| s.snapshot(&arc_segs));
         let mut app = Self {
             current,
             previous: None,
+            current_sample_at,
+            previous_sample_at: None,
             arc_reader,
             mem_source,
             mem_snapshot,
@@ -511,17 +517,31 @@ impl App {
         self.current_tab = target;
     }
 
-    pub fn refresh(&mut self) -> Result<()> {
+    pub fn refresh_arc(&mut self) -> Result<()> {
         let next = (self.arc_reader)()?;
+        let next_sample_at = Instant::now();
         self.previous = Some(std::mem::replace(&mut self.current, next));
+        self.previous_sample_at = Some(std::mem::replace(
+            &mut self.current_sample_at,
+            next_sample_at,
+        ));
         if let Some(mem) = self.mem_source.as_mut() {
             // Memory refresh failures are non-fatal — the bar just won't update.
             let _ = mem.refresh();
         }
         let arc_segs = arc_segments(&self.current);
         self.mem_snapshot = self.mem_source.as_ref().and_then(|s| s.snapshot(&arc_segs));
+        Ok(())
+    }
+
+    pub fn refresh_slow(&mut self) {
         self.refresh_pools();
         self.refresh_datasets();
+    }
+
+    pub fn refresh(&mut self) -> Result<()> {
+        self.refresh_arc()?;
+        self.refresh_slow();
         Ok(())
     }
 
@@ -965,22 +985,121 @@ impl App {
         ratio(hits, misses)
     }
 
+    fn throughput_rate(&self, current: u64, previous: u64) -> Option<u64> {
+        let previous_sample_at = self.previous_sample_at?;
+        let elapsed = self.current_sample_at.duration_since(previous_sample_at);
+        if elapsed.is_zero() {
+            return None;
+        }
+        let delta = current.saturating_sub(previous);
+        Some((delta as f64 / elapsed.as_secs_f64()).round() as u64)
+    }
+
+    fn throughput_sum_rate(&self, current: &[u64], previous: &[u64]) -> Option<u64> {
+        debug_assert_eq!(current.len(), previous.len());
+        let current_total = current.iter().copied().sum::<u64>();
+        let previous_total = previous.iter().copied().sum::<u64>();
+        self.throughput_rate(current_total, previous_total)
+    }
+
+    /// zarcstat-compatible total ARC accesses per second (`read`): hits + IO hits + misses.
+    pub fn throughput_reads(&self) -> Option<u64> {
+        let prev = self.previous.as_ref()?;
+        self.throughput_sum_rate(
+            &[self.current.hits, self.current.iohits, self.current.misses],
+            &[prev.hits, prev.iohits, prev.misses],
+        )
+    }
+
     pub fn throughput_hits(&self) -> Option<u64> {
-        self.previous
-            .as_ref()
-            .map(|prev| self.current.hits.saturating_sub(prev.hits))
+        let prev = self.previous.as_ref()?;
+        self.throughput_rate(self.current.hits, prev.hits)
     }
 
     pub fn throughput_misses(&self) -> Option<u64> {
-        self.previous
-            .as_ref()
-            .map(|prev| self.current.misses.saturating_sub(prev.misses))
+        let prev = self.previous.as_ref()?;
+        self.throughput_rate(self.current.misses, prev.misses)
     }
 
     pub fn throughput_iohits(&self) -> Option<u64> {
-        self.previous
-            .as_ref()
-            .map(|prev| self.current.iohits.saturating_sub(prev.iohits))
+        let prev = self.previous.as_ref()?;
+        self.throughput_rate(self.current.iohits, prev.iohits)
+    }
+
+    pub fn throughput_demand_reads(&self) -> Option<u64> {
+        let prev = self.previous.as_ref()?;
+        self.throughput_sum_rate(
+            &[
+                self.current.demand_data_hits,
+                self.current.demand_data_iohits,
+                self.current.demand_data_misses,
+                self.current.demand_metadata_hits,
+                self.current.demand_metadata_iohits,
+                self.current.demand_metadata_misses,
+            ],
+            &[
+                prev.demand_data_hits,
+                prev.demand_data_iohits,
+                prev.demand_data_misses,
+                prev.demand_metadata_hits,
+                prev.demand_metadata_iohits,
+                prev.demand_metadata_misses,
+            ],
+        )
+    }
+
+    pub fn throughput_demand_data_reads(&self) -> Option<u64> {
+        let prev = self.previous.as_ref()?;
+        self.throughput_sum_rate(
+            &[
+                self.current.demand_data_hits,
+                self.current.demand_data_iohits,
+                self.current.demand_data_misses,
+            ],
+            &[
+                prev.demand_data_hits,
+                prev.demand_data_iohits,
+                prev.demand_data_misses,
+            ],
+        )
+    }
+
+    pub fn throughput_demand_metadata_reads(&self) -> Option<u64> {
+        let prev = self.previous.as_ref()?;
+        self.throughput_sum_rate(
+            &[
+                self.current.demand_metadata_hits,
+                self.current.demand_metadata_iohits,
+                self.current.demand_metadata_misses,
+            ],
+            &[
+                prev.demand_metadata_hits,
+                prev.demand_metadata_iohits,
+                prev.demand_metadata_misses,
+            ],
+        )
+    }
+
+    pub fn throughput_prefetch_reads(&self) -> Option<u64> {
+        let prev = self.previous.as_ref()?;
+        self.throughput_sum_rate(
+            &[
+                self.current.prefetch_data_hits,
+                self.current.prefetch_data_iohits,
+                self.current.prefetch_data_misses,
+                self.current.prefetch_metadata_hits,
+                self.current.prefetch_metadata_iohits,
+                self.current.prefetch_metadata_misses,
+            ],
+            &[
+                prev.prefetch_data_hits,
+                prev.prefetch_data_iohits,
+                prev.prefetch_data_misses,
+                prev.prefetch_metadata_hits,
+                prev.prefetch_metadata_iohits,
+                prev.prefetch_metadata_misses,
+            ],
+        )
     }
 
     pub fn arc_breakdown(&self) -> Vec<BreakdownRow> {
@@ -1077,6 +1196,7 @@ pub fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn sample_stats() -> ArcStats {
         ArcStats {
@@ -1125,9 +1245,15 @@ mod tests {
     /// Build an `App` with no live sources — used by derived-metric tests
     /// that don't exercise refresh().
     fn app_with(current: ArcStats, previous: Option<ArcStats>) -> App {
+        let current_sample_at = Instant::now();
+        let previous_sample_at = previous
+            .as_ref()
+            .map(|_| current_sample_at - Duration::from_secs(1));
         App {
             current,
             previous,
+            current_sample_at,
+            previous_sample_at,
             arc_reader: Box::new(|| panic!("arc_reader not used in this test")),
             mem_source: None,
             mem_snapshot: None,
@@ -1202,10 +1328,103 @@ mod tests {
     fn throughput_delta() {
         let mut prev = sample_stats();
         prev.hits = 8000;
+        prev.iohits = 90;
         prev.misses = 900;
         let app = app_with(sample_stats(), Some(prev));
         assert_eq!(app.throughput_hits(), Some(1000));
+        assert_eq!(app.throughput_iohits(), Some(10));
         assert_eq!(app.throughput_misses(), Some(100));
+        assert_eq!(app.throughput_reads(), Some(1110));
+    }
+
+    #[test]
+    fn throughput_is_normalized_by_elapsed_sample_time() {
+        let mut prev = sample_stats();
+        prev.hits = 0;
+        prev.iohits = 0;
+        prev.misses = 0;
+
+        let mut current = sample_stats();
+        current.hits = 9000;
+        current.iohits = 450;
+        current.misses = 90;
+
+        let mut app = app_with(current, Some(prev));
+        app.previous_sample_at = Some(app.current_sample_at - Duration::from_secs(45));
+
+        assert_eq!(app.throughput_hits(), Some(200));
+        assert_eq!(app.throughput_iohits(), Some(10));
+        assert_eq!(app.throughput_misses(), Some(2));
+        assert_eq!(app.throughput_reads(), Some(212));
+    }
+
+    #[test]
+    fn throughput_handles_subsecond_intervals() {
+        let mut prev = sample_stats();
+        prev.hits = 8000;
+
+        let mut app = app_with(sample_stats(), Some(prev));
+        app.previous_sample_at = Some(app.current_sample_at - Duration::from_millis(500));
+
+        assert_eq!(app.throughput_hits(), Some(2000));
+    }
+
+    #[test]
+    fn throughput_none_without_elapsed_sample_time() {
+        let mut prev = sample_stats();
+        prev.hits = 8000;
+        let mut app = app_with(sample_stats(), Some(prev));
+        app.previous_sample_at = None;
+
+        assert!(app.throughput_hits().is_none());
+    }
+
+    #[test]
+    fn throughput_exposes_zarcstat_default_read_columns() {
+        let mut prev = sample_stats();
+        prev.demand_data_hits = 4990;
+        prev.demand_data_iohits = 49;
+        prev.demand_data_misses = 498;
+        prev.demand_metadata_hits = 2980;
+        prev.demand_metadata_iohits = 27;
+        prev.demand_metadata_misses = 297;
+        prev.prefetch_data_hits = 780;
+        prev.prefetch_data_iohits = 14;
+        prev.prefetch_data_misses = 149;
+        prev.prefetch_metadata_hits = 190;
+        prev.prefetch_metadata_iohits = 4;
+        prev.prefetch_metadata_misses = 49;
+
+        let app = app_with(sample_stats(), Some(prev));
+
+        assert_eq!(app.throughput_demand_data_reads(), Some(13));
+        assert_eq!(app.throughput_demand_metadata_reads(), Some(26));
+        assert_eq!(app.throughput_demand_reads(), Some(39));
+        assert_eq!(app.throughput_prefetch_reads(), Some(34));
+    }
+
+    #[test]
+    fn refresh_arc_updates_arc_without_refreshing_slow_sources() {
+        let mut current = sample_stats();
+        current.hits = 100;
+        let mut next = sample_stats();
+        next.hits = 200;
+
+        let mut app = app_with(current, None);
+        app.arc_reader = Box::new(move || Ok(next.clone()));
+        app.pools_source = Some(Box::new(crate::pools::fake::FakePoolsSource::new(vec![
+            test_pool("tank", PoolHealth::Online, 1_000, 500),
+        ])));
+        app.datasets_source = Some(Box::new(crate::datasets::fake::FakeDatasetsSource::new(
+            vec![ds_fs("tank", vec![])],
+        )));
+
+        app.refresh_arc().unwrap();
+
+        assert_eq!(app.current.hits, 200);
+        assert_eq!(app.previous.as_ref().unwrap().hits, 100);
+        assert!(app.pools_snapshot.is_empty());
+        assert!(app.datasets_snapshot.is_empty());
     }
 
     #[test]

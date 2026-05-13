@@ -50,12 +50,12 @@ fn draw_arc_section(frame: &mut Frame, area: Rect, app: &App) {
 
     let overall = app.hit_ratio_overall();
     let demand = app.hit_ratio_demand();
-    let hits = app
-        .throughput_hits()
+    let reads = app
+        .throughput_reads()
         .map(|h| format!("{h}/s"))
         .unwrap_or_else(|| "—".to_string());
     let summary = Paragraph::new(Line::from(vec![Span::raw(format!(
-        "Overall {overall:.1}%    Demand {demand:.1}%    Hits {hits}"
+        "Overall {overall:.1}%    Demand {demand:.1}%    Read {reads}"
     ))]))
     .alignment(Alignment::Center);
     frame.render_widget(summary, summary_area);
