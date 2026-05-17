@@ -184,6 +184,12 @@ pub struct App {
     pub datasets_refresh_error: Option<String>,
     pub datasets_init_error: Option<String>,
     pub datasets_view: DatasetsView,
+    /// Mirror of `pools_first_paint` for datasets — true until the
+    /// first non-empty snapshot lands, at which point every pool root
+    /// is auto-seeded into `datasets_view.expanded`. Set lazily because
+    /// the dataset walk doesn't run until the user visits the Datasets
+    /// tab (see `refresh`).
+    datasets_first_paint: bool,
 }
 
 pub struct BreakdownRow {
@@ -229,17 +235,28 @@ impl App {
                 expanded: BTreeSet::new(),
                 selected: 0,
             },
+            datasets_first_paint: true,
         };
-        // Tick the pools source once so the first render has data.
+        // Tick the pools and datasets sources once so the first render
+        // has data. The datasets walk is expensive (~9000 ARC hits on a
+        // host with ~13 datasets), but doing it once at startup is the
+        // unavoidable cost of having dataset data ready when the user
+        // first switches to the Datasets tab. The per-tick walk that
+        // used to follow this startup walk was the real hits/s bug —
+        // gated in `refresh` on `current_tab == Tab::Datasets`.
         app.refresh_pools();
         app.refresh_datasets();
-        // Seed `expanded` with every pool root so the landing screen
-        // shows pools expanded one level.
-        if let DatasetsView::Tree { expanded, .. } = &mut app.datasets_view {
-            for root in &app.datasets_snapshot {
-                expanded.insert(root.name.clone());
-            }
-        }
+        // Re-baseline ARC stats AFTER the startup walks. Without this,
+        // the first event-loop tick's `current - previous` delta would
+        // include the ~9000 hits the dataset walk above just generated,
+        // and the user would see a spurious "9k hits/s" on the Overview
+        // tab for one second before it dropped to a real value. We
+        // refresh the mem snapshot too so the segments line up with
+        // the fresh ARC numbers — `meminfo` itself is a tiny procfs
+        // read so the cost is noise.
+        app.current = (app.arc_reader)()?;
+        let arc_segs = arc_segments(&app.current);
+        app.mem_snapshot = app.mem_source.as_ref().and_then(|s| s.snapshot(&arc_segs));
         Ok(app)
     }
 
@@ -321,6 +338,25 @@ impl App {
             Ok(()) => {
                 self.datasets_snapshot = ds.roots();
                 self.datasets_refresh_error = None;
+                // Mirror the `pools_first_paint` pattern: seed `expanded`
+                // with every pool root on the first non-empty snapshot so
+                // the landing screen shows pools one level expanded. The
+                // seeding used to happen in `App::new` against an eagerly-
+                // pulled snapshot, but the dataset walk is too expensive
+                // to do at startup (~9000 ARC hits per tick on a host
+                // with ~13 datasets, which inflates the very first hits/s
+                // reading on the Overview tab). Doing it here means the
+                // first refresh — triggered by `switch_tab(Datasets)` —
+                // both populates the snapshot and seeds expansion in one
+                // pass, with no work done until the user actually visits.
+                if self.datasets_first_paint && !self.datasets_snapshot.is_empty() {
+                    if let DatasetsView::Tree { expanded, .. } = &mut self.datasets_view {
+                        for root in &self.datasets_snapshot {
+                            expanded.insert(root.name.clone());
+                        }
+                    }
+                    self.datasets_first_paint = false;
+                }
                 self.prune_expanded_set();
                 self.clamp_datasets_selection();
                 self.fall_back_from_detail_if_dataset_vanished();
@@ -509,6 +545,14 @@ impl App {
             }
         }
         self.current_tab = target;
+        // Datasets refreshes are skipped when off the Datasets tab to
+        // avoid the ~9000-ARC-hits-per-tick libzfs walk inflating the
+        // displayed throughput. Pull a fresh snapshot now so the tree
+        // renders with up-to-date sizes on arrival rather than whatever
+        // was current the last time the user visited (or startup).
+        if target == Tab::Datasets {
+            self.refresh_datasets();
+        }
     }
 
     pub fn refresh(&mut self) -> Result<()> {
@@ -521,7 +565,19 @@ impl App {
         let arc_segs = arc_segments(&self.current);
         self.mem_snapshot = self.mem_source.as_ref().and_then(|s| s.snapshot(&arc_segs));
         self.refresh_pools();
-        self.refresh_datasets();
+        // Walking the dataset tree via libzfs costs ~700 ARC hits per
+        // dataset (the cost is in `zfs_open` + `zfs_iter_filesystems`,
+        // not in the per-property fetches — libzfs caches the property
+        // block on open). On a host with ~13 datasets that's ~9000 hits
+        // per tick, which dominates real ARC traffic and inflates the
+        // displayed hits/s by 10–50x vs `arcstat`. Only the Datasets
+        // tab actually renders dataset data, so skip the walk when the
+        // user is anywhere else. `switch_tab` triggers a one-shot
+        // refresh when landing on Datasets so the tree is fresh on
+        // arrival.
+        if self.current_tab == Tab::Datasets {
+            self.refresh_datasets();
+        }
         Ok(())
     }
 
@@ -1150,6 +1206,7 @@ mod tests {
                 expanded: BTreeSet::new(),
                 selected: 0,
             },
+            datasets_first_paint: true,
         }
     }
 
